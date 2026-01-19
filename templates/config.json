@@ -1,0 +1,28 @@
+{
+  "max_iterations": 6,
+  "trigger": {
+    "mode": "manual",
+    "watch_paths": [".ai/SPEC.md"],
+    "interval_seconds": 300
+  },
+  "tests": {
+    "enabled": false,
+    "command": "npm test",
+    "required_to_pass": false
+  },
+  "human_required_on": {
+    "security_issues": true,
+    "low_confidence_threshold": 0.6,
+    "categories": ["security", "architecture"]
+  },
+  "agents": {
+    "developer": {
+      "type": "mock",
+      "timeout_seconds": 300
+    },
+    "reviewer": {
+      "type": "mock",
+      "timeout_seconds": 120
+    }
+  }
+}
