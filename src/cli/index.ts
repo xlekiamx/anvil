@@ -3,6 +3,8 @@ import { createInitCommand } from './commands/init.js';
 import { createStartCommand } from './commands/start.js';
 import { createStatusCommand } from './commands/status.js';
 import { createStopCommand } from './commands/stop.js';
+import { createResumeCommand } from './commands/resume.js';
+import { createResetCommand } from './commands/reset.js';
 
 export function createCli(): Command {
   const program = new Command();
@@ -16,6 +18,8 @@ export function createCli(): Command {
   program.addCommand(createStartCommand());
   program.addCommand(createStatusCommand());
   program.addCommand(createStopCommand());
+  program.addCommand(createResumeCommand());
+  program.addCommand(createResetCommand());
 
   return program;
 }

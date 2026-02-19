@@ -1,10 +1,14 @@
 {
-  "feature_id": "",
-  "status": "needs_fix",
-  "iteration": 1,
-  "last_actor": "orchestrator",
-  "human_required": false,
+  "plan_file": "./PLAN.md",
+  "turn": "coder",
+  "current_task": null,
+  "review_issues": [],
+  "completed_tasks": [],
+  "iteration": 0,
   "done": false,
+  "human_required": false,
+  "blocked_reason": null,
+  "pending_question": null,
   "started_at": "",
   "updated_at": ""
 }

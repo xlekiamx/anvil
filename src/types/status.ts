@@ -1,50 +1,60 @@
 import { z } from 'zod';
 
-export const WorkflowStatusSchema = z.enum([
-  'needs_fix',
-  'needs_review',
-  'done',
-  'blocked',
-]);
-export type WorkflowStatus = z.infer<typeof WorkflowStatusSchema>;
+export const QuestionOptionSchema = z.object({
+  label: z.string(),
+  description: z.string().optional(),
+});
+export type QuestionOption = z.infer<typeof QuestionOptionSchema>;
 
-export const ActorSchema = z.enum([
-  'developer',
-  'reviewer',
-  'orchestrator',
-  'human',
-]);
-export type Actor = z.infer<typeof ActorSchema>;
+export const PendingQuestionSchema = z.object({
+  session_id: z.string(),
+  question: z.string(),
+  options: z.array(QuestionOptionSchema).optional(),
+  asked_at: z.string().datetime(),
+});
+export type PendingQuestion = z.infer<typeof PendingQuestionSchema>;
+
+export const ReviewIssueSchema = z.object({
+  description: z.string(),
+  severity: z.enum(['critical', 'high', 'medium', 'low']),
+});
+export type ReviewIssue = z.infer<typeof ReviewIssueSchema>;
+
+export const CurrentTaskSchema = z.object({
+  id: z.string(),
+  status: z.enum(['in_progress', 'in_review', 'fixing']),
+});
+export type CurrentTask = z.infer<typeof CurrentTaskSchema>;
 
 export const StatusSchema = z.object({
-  feature_id: z.string().min(1),
-  status: WorkflowStatusSchema,
+  plan_file: z.string(),
+  turn: z.string(),
+  current_task: CurrentTaskSchema.nullable().default(null),
+  review_issues: z.array(ReviewIssueSchema).default([]),
+  completed_tasks: z.array(z.string()).default([]),
   iteration: z.number().int().min(0),
-  last_actor: ActorSchema,
-  human_required: z.boolean(),
   done: z.boolean(),
-  annotations: z.string().optional(),
-  blocked_reason: z.string().optional(),
+  human_required: z.boolean(),
+  blocked_reason: z.string().nullable().default(null),
+  pending_question: PendingQuestionSchema.nullable().default(null),
   started_at: z.string().datetime().optional(),
   updated_at: z.string().datetime(),
 });
 export type Status = z.infer<typeof StatusSchema>;
 
-export interface StateTransition {
-  from: WorkflowStatus;
-  to: WorkflowStatus;
-  trigger: string;
-}
-
-export function createInitialStatus(featureId: string): Status {
+export function createInitialStatus(planFile: string, firstWorker: string): Status {
   const now = new Date().toISOString();
   return {
-    feature_id: featureId,
-    status: 'needs_fix',
-    iteration: 1,
-    last_actor: 'orchestrator',
-    human_required: false,
+    plan_file: planFile,
+    turn: firstWorker,
+    current_task: null,
+    review_issues: [],
+    completed_tasks: [],
+    iteration: 0,
     done: false,
+    human_required: false,
+    blocked_reason: null,
+    pending_question: null,
     started_at: now,
     updated_at: now,
   };

@@ -1,42 +1,26 @@
-import type { Status } from '../types/status.js';
-import type { Config } from '../types/config.js';
-import type { ReviewOutput } from '../types/review.js';
+import type { QuestionOption } from '../types/status.js';
 
-export interface AgentContext {
-  repoPath: string;
-  aiDir: string;
-  status: Status;
-  config: Config;
-  specContent: string;
-  reviewOutput?: ReviewOutput;
+/** Question detected during interactive execution */
+export interface DetectedQuestion {
+  sessionId: string;
+  question: string;
+  options?: QuestionOption[];
 }
 
-export interface AgentResult {
+/** Callback for handling user questions in interactive mode */
+export type QuestionHandler = (question: DetectedQuestion) => Promise<string>;
+
+export interface WorkerResult {
   success: boolean;
+  output: string;     // pure JSON string from stdout
   error?: string;
   durationMs: number;
+  pendingQuestion?: DetectedQuestion;
 }
 
-export interface DeveloperAgentResult extends AgentResult {
-  filesChanged?: string[];
-  annotations?: string;
-}
-
-export interface ReviewerAgentResult extends AgentResult {
-  output?: ReviewOutput;
-}
-
-export interface DeveloperAgent {
+export interface Worker {
   readonly name: string;
-  execute(context: AgentContext): Promise<DeveloperAgentResult>;
-}
-
-export interface ReviewerAgent {
-  readonly name: string;
-  execute(context: AgentContext): Promise<ReviewerAgentResult>;
-}
-
-export interface AgentFactory {
-  createDeveloper(config: Config): DeveloperAgent;
-  createReviewer(config: Config): ReviewerAgent;
+  execute(prompt: string, cwd: string): Promise<WorkerResult>;
+  /** Kill the running child process if any */
+  kill?(): void;
 }

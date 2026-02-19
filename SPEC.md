@@ -1,15 +1,16 @@
-# Anvil - Local Multi-Agent Dev/Review Orchestration
+# Anvil - Generic Worker-Based Multi-Agent Orchestration
 
 ## 1. Overview
 
-Anvil is a local, deterministic, multi-agent orchestration system that continuously loops between code development and code review with minimal human intervention.
+Anvil is a local, deterministic, multi-agent orchestration system that coordinates generic workers in a turn-based loop with minimal human intervention.
 
 ### Core Principles
 
 - **Local-first**: No GitHub Actions, no CI dependency
 - **Deterministic**: State-driven, inspectable, restartable at any point
 - **Multi-repo safe**: One repo = one isolated loop, no cross-pollution
-- **Controlled orchestration**: LLMs act as tools, not autonomous agents
+- **Generic workers**: Workers are defined by provider + role in config, not code
+- **Dumb orchestrator**: Calls workers based on `turn`, parses JSON output, updates shared state
 
 ### What Anvil Is NOT
 
@@ -26,40 +27,25 @@ Anvil is a local, deterministic, multi-agent orchestration system that continuou
 
 | Component | Role | Technology |
 |-----------|------|------------|
-| **Orchestrator** | Controller - owns state machine, decides agent execution | Node.js (non-LLM) |
-| **Developer Agent** | Writes/modifies code, fixes issues | Claude Code CLI |
-| **Reviewer Agent** | Reviews diffs, reports issues or approves | OpenAI Codex |
+| **Orchestrator** | Dumb state machine — calls workers based on turn, parses JSON, updates state | Node.js (non-LLM) |
+| **Workers** | Generic agents — receive a prompt, return JSON output | Configurable (Claude, Codex, mock) |
 
-### 2.2 Responsibility Boundaries
+### 2.2 Design Philosophy
 
-**Orchestrator (Controller)**
-- Load and save state files
-- Decide which agent to invoke next
-- Invoke agents and wait for process exit
-- Read agent output files
-- Enforce iteration limits and stop conditions
-- **Does NOT** reason about code quality
-
-**Developer Agent (Claude Code CLI)**
-- Write and modify code
-- Fix issues reported by reviewer
-- Read review feedback from `.ai/review-output.json`
-- **Does NOT** decide workflow or quality
-
-**Reviewer Agent (Codex)**
-- Review code changes (via git)
-- Report remaining issues or approve
-- Write structured output to `.ai/review-output.json`
-- **Does NOT** write code
+- **Workers are generic** — defined by `provider` + `role` + `output_schema` in config
+- **Workers are dumb** — they receive a prompt, return JSON output. They don't decide workflow.
+- **Orchestrator is a dumb state machine** — calls workers based on `turn`, parses their JSON output, updates shared state file
+- **Coder picks tasks** — orchestrator says "implement the plan", coder picks a task and reports back
+- **Shared state file is the communication channel** — workers read it (via prompt), orchestrator writes it
+- **Commits happen after reviewer approves** — not by the coder
+- **Worker output is pure JSON** — each role has an output schema. No heuristic parsing.
 
 ### 2.3 Communication Model
 
-- **No agent-to-agent direct communication**
-- Agents communicate indirectly via:
-  - Repository file changes
-  - Structured output files
-  - Shared state file
-- Orchestrator reads agent output files after process exit (no polling)
+- **No worker-to-worker direct communication**
+- Workers communicate indirectly via the orchestrator's prompt (which includes state context)
+- Orchestrator owns the state file — workers never write to it directly
+- Workers return pure JSON output — orchestrator parses and acts on it
 
 ---
 
@@ -69,471 +55,455 @@ Each repository contains its own AI control directory:
 
 ```
 .ai/
-├── config.json          # Per-repo configuration
-├── status.json          # Workflow state (orchestrator-owned)
-├── SPEC.md              # Feature requirements
-└── review-output.json   # Reviewer decisions
+├── config.json          # Per-repo configuration (workers, workflow, plan_file)
+└── state.json           # Workflow state (orchestrator-owned)
 ```
+
+The plan file (e.g., `./PLAN.md`) lives wherever configured — typically at the repo root.
 
 ### 3.0 File Ownership
 
 | File | Write | Read |
 |------|-------|------|
-| `status.json` | Orchestrator (state), Developer (annotations only) | Orchestrator, Developer |
+| `state.json` | Orchestrator only | Orchestrator (workers read via prompt) |
 | `config.json` | User (manual) | Orchestrator |
-| `SPEC.md` | User / CLI | Developer, Reviewer |
-| `review-output.json` | Reviewer | Orchestrator, Developer |
+| Plan file (e.g., `PLAN.md`) | User | Orchestrator (included in worker prompts) |
 
-**Key Rule:** Only the orchestrator may modify state fields in `status.json` (`status`, `iteration`, `human_required`, `done`). Developer may only add notes to the `annotations` field.
-
-### 3.1 status.json (State File)
-
-Single source of truth for workflow state.
-
-- **State fields** (orchestrator-owned): `status`, `iteration`, `last_actor`, `human_required`, `done`
-- **Annotations field** (developer may write): `annotations`
+### 3.1 config.json (Per-Repo Configuration)
 
 ```json
 {
-  "feature_id": "auth-rate-limiting",
-  "status": "needs_fix",
-  "iteration": 2,
-  "last_actor": "reviewer",
-  "human_required": false,
-  "done": false,
-  "annotations": "Refactored rate limiter to use sliding window algorithm"
+  "workers": {
+    "coder": {
+      "provider": "claude",
+      "role": "You are a senior developer. Implement tasks from the plan.",
+      "model": "opus",
+      "interactive": true,
+      "output_schema": {
+        "task_id": "string",
+        "task_description": "string",
+        "status": "completed | needs_review"
+      }
+    },
+    "reviewer": {
+      "provider": "codex",
+      "role": "You are a code reviewer. Review changes for correctness, security, and quality.",
+      "output_schema": {
+        "approved": "boolean",
+        "issues": [{ "description": "string", "severity": "critical | high | medium | low" }],
+        "confidence": "number 0-1"
+      }
+    }
+  },
+  "plan_file": "./PLAN.md",
+  "workflow": ["coder", "reviewer"],
+  "loop_mode": "auto",
+  "max_iterations_per_task": 6
 }
 ```
 
-**Valid Statuses:**
-| Status | Description |
-|--------|-------------|
-| `needs_fix` | Developer must address issues |
-| `needs_review` | Reviewer must evaluate changes |
-| `done` | Feature approved and complete |
-| `blocked` | Requires human intervention or error recovery |
+**Worker Configuration Options:**
 
-### 3.2 review-output.json (Reviewer Output)
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `provider` | string | - | Provider: `claude`, `codex`, or `mock` |
+| `role` | string | - | System prompt defining the worker's role |
+| `model` | string | - | Override default model (optional) |
+| `interactive` | boolean | `false` | Enable interactive Q&A mode |
+| `output_schema` | object | `{}` | Expected JSON output shape (included in prompt) |
 
-Written by reviewer agent after each review cycle. Read by orchestrator and developer agent.
+**Top-Level Configuration:**
 
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `plan_file` | string | `./PLAN.md` | Path to the plan file |
+| `workflow` | string[] | `["coder", "reviewer"]` | Turn order — worker names from the `workers` map |
+| `loop_mode` | string | `auto` | `auto` = continuous loop, `manual` = pause after each task |
+| `max_iterations_per_task` | number | `6` | Max coder→reviewer cycles before stopping |
+
+### 3.2 state.json (Shared State File)
+
+Single source of truth for workflow state. Orchestrator-owned.
+
+```json
+{
+  "plan_file": "./PLAN.md",
+  "turn": "coder",
+  "current_task": {
+    "id": "5",
+    "description": "Implement rate limiting",
+    "status": "in_review"
+  },
+  "review_issues": [
+    { "description": "Missing edge case", "severity": "high" }
+  ],
+  "completed_tasks": [
+    { "id": "1", "description": "Setup project structure" },
+    { "id": "2", "description": "Add auth middleware" }
+  ],
+  "iteration": 2,
+  "done": false,
+  "human_required": false,
+  "blocked_reason": null,
+  "pending_question": null
+}
+```
+
+**State Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `plan_file` | string | Path to the plan file |
+| `turn` | string | Name of the worker whose turn it is |
+| `current_task` | object\|null | Task currently being worked on (`id`, `description`, `status`) |
+| `review_issues` | array | Issues from the last review |
+| `completed_tasks` | array | Tasks that have been approved and committed |
+| `iteration` | number | Current iteration count (resets per task) |
+| `done` | boolean | Whether all tasks are complete |
+| `human_required` | boolean | Whether human intervention is needed |
+| `blocked_reason` | string\|null | Why the loop is blocked |
+| `pending_question` | object\|null | Pending interactive question from a worker |
+
+---
+
+## 4. Worker Interface
+
+### 4.1 Generic Worker
+
+```typescript
+interface Worker {
+  readonly name: string;
+  execute(prompt: string, cwd: string): Promise<WorkerResult>;
+}
+
+interface WorkerResult {
+  success: boolean;
+  output: string;     // pure JSON string from stdout
+  error?: string;
+  durationMs: number;
+  pendingQuestion?: DetectedQuestion;
+}
+```
+
+### 4.2 Worker JSON Output Formats
+
+**Coder output:**
+```json
+{
+  "task_id": "5",
+  "task_description": "Implement rate limiting middleware",
+  "status": "completed"
+}
+```
+
+**Reviewer output:**
 ```json
 {
   "approved": false,
   "issues": [
-    {
-      "id": "R1",
-      "severity": "high",
-      "category": "security",
-      "description": "Rate limiter is not concurrency-safe",
-      "file": "src/middleware/rateLimiter.ts",
-      "line": 42
-    }
+    { "description": "Rate limiter is not concurrency-safe", "severity": "high" }
   ],
-  "summary": "Found 1 high-severity concurrency issue",
-  "confidence": 0.85,
-  "request_human": false
+  "confidence": 0.85
 }
 ```
 
-**Note:** `request_human` is a REQUEST from the reviewer. The orchestrator decides whether to honor it and records `human_required: true` in `status.json`.
+### 4.3 Providers
 
-**Issue Severity Levels:**
-- `critical` - Security vulnerabilities, data loss risks
-- `high` - Bugs, logic errors
-- `medium` - Code quality, performance
-- `low` - Style, minor improvements
-
-**Issue Categories:**
-- `security` - Security vulnerabilities
-- `correctness` - Logic/functional bugs
-- `performance` - Performance issues
-- `maintainability` - Code quality, readability
-- `architecture` - Design/structural concerns
-
-### 3.3 SPEC.md (Feature Specification)
-
-Markdown file containing feature requirements. Written by user or passed via CLI.
-
-```markdown
-# Feature: Auth Rate Limiting
-
-## Requirements
-- Implement rate limiting for authentication endpoints
-- Limit: 5 attempts per minute per IP
-- Return 429 status when limit exceeded
-
-## Acceptance Criteria
-- [ ] Rate limiter middleware created
-- [ ] Applied to /login and /register endpoints
-- [ ] Unit tests pass
-- [ ] Integration tests pass
-```
-
-### 3.4 config.json (Per-Repo Configuration)
-
-```json
-{
-  "max_iterations": 6,
-  "trigger": {
-    "mode": "manual",
-    "watch_paths": [".ai/SPEC.md"],
-    "interval_seconds": 300
-  },
-  "tests": {
-    "enabled": true,
-    "command": "npm test",
-    "required_to_pass": false
-  },
-  "human_required_on": {
-    "security_issues": true,
-    "low_confidence_threshold": 0.6,
-    "categories": ["security", "architecture"]
-  }
-}
-```
+| Provider | Implementation | Usage |
+|----------|---------------|-------|
+| `claude` | Claude Code CLI (`claude -p`) | Interactive/non-interactive development |
+| `codex` | Codex CLI (`codex exec`) | Code review |
+| `mock` | Configurable mock | Testing |
 
 ---
 
-## 4. State Machine
+## 5. Orchestrator Loop
 
-### 4.1 Loop Flow
+### 5.1 Main Loop
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│   ┌──────────┐     ┌──────────┐     ┌──────────┐           │
-│   │  START   │────▶│ DEVELOP  │────▶│  REVIEW  │           │
-│   └──────────┘     └──────────┘     └──────────┘           │
-│                          ▲               │                  │
-│                          │               │                  │
-│                          │    ┌──────────▼──────────┐      │
-│                          │    │    approved?        │      │
-│                          │    └──────────┬──────────┘      │
-│                          │               │                  │
-│                    NO    │               │ YES              │
-│                    ┌─────┴─────┐   ┌─────▼─────┐           │
-│                    │ needs_fix │   │   DONE    │           │
-│                    └───────────┘   └───────────┘           │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+1. Read state.json
+2. Check stop conditions (done, blocked, human_required, max iterations)
+3. Read `turn` from state → look up worker by name
+4. Build prompt:
+   - Worker's role (from config)
+   - Plan content (from plan_file)
+   - State context (completed tasks, current task, review issues)
+   - Git diff (for non-coder workers)
+   - Output schema template
+5. Call worker.execute(prompt, repoPath) → get JSON output
+6. Parse JSON output, validate against expected schema
+7. Update state based on turn:
+   - Coder turn: set current_task from output, advance turn to reviewer
+   - Reviewer approves: git commit, move task to completed_tasks, reset turn to coder
+   - Reviewer rejects: set review_issues, increment iteration, reset turn to coder
+8. Write state.json
+9. If loop_mode = manual: pause after each task completion
+10. If interactive and question detected: pause, collect answer
+11. Loop until stop condition
 ```
 
-### 4.2 State Transitions
+### 5.2 Turn Transitions
 
-| From | To | Trigger |
-|------|-----|---------|
-| `(init)` | `needs_fix` | `anvil start` with new feature |
-| `needs_fix` | `needs_review` | Developer agent exits |
-| `needs_review` | `needs_fix` | Reviewer reports issues |
-| `needs_review` | `done` | Reviewer approves |
-| `*` | `blocked` | Human required / max iterations / error |
+| After | If | Then |
+|-------|-----|------|
+| Coder completes | — | `turn` → next worker in workflow (reviewer) |
+| Reviewer approves | — | Commit changes, move task to completed, `turn` → first worker (coder) |
+| Reviewer rejects | — | Set review_issues, increment iteration, `turn` → first worker (coder) |
 
-### 4.3 Stop Conditions
+### 5.3 Stop Conditions
 
 The loop terminates when:
-1. **Feature approved**: `status = done`
-2. **Max iterations reached**: `iteration >= max_iterations`
+1. **Done**: `done = true`
+2. **Blocked**: `blocked_reason` is set
 3. **Human required**: `human_required = true`
-4. **Blocked**: Agent failure after retries
+4. **Max iterations**: `iteration >= max_iterations_per_task`
 
 ---
 
-## 5. CLI Interface
+## 6. CLI Interface
 
-### 5.1 Commands
+### 6.1 Commands
 
 ```bash
 # Initialize a repo for Anvil
 anvil init
 
-# Start the dev/review loop
-anvil start                          # Uses .ai/SPEC.md
-anvil start "Add user authentication" # Inline feature description
+# Start the orchestration loop
+anvil start
 
 # Check current status
 anvil status
+anvil status --json
 
 # Stop the running loop
 anvil stop
+anvil stop --reason "Need to rethink approach"
 
-# Watch mode (file watcher trigger)
-anvil watch
-
-# Timer mode
-anvil daemon --interval 300
+# Resume a paused session
+anvil resume
 ```
 
-### 5.2 Command Details
+### 6.2 Command Details
 
 **`anvil init`**
 - Creates `.ai/` directory
-- Generates template `config.json`
-- Creates empty `status.json`
-- Creates template `SPEC.md`
+- Generates `config.json` with default workers (claude coder + codex reviewer)
+- User must create their own plan file (e.g., `PLAN.md`)
 
-**`anvil start [feature]`**
-- If feature provided: writes to `.ai/SPEC.md`
-- If `.ai/SPEC.md` exists: uses existing spec
-- Initializes `status.json` with `needs_fix`
-- Begins orchestration loop
+**`anvil start`**
+- Loads config from `.ai/config.json`
+- Validates plan file exists at configured `plan_file` path
+- Creates initial `state.json`
+- Starts orchestration loop
 
 **`anvil status`**
-- Displays current `status.json` contents
-- Shows iteration count
-- Shows last actor
-- Shows any pending issues
+- Displays: current task, completed tasks count, turn (next worker), iteration, review issues
 
 **`anvil stop`**
-- Gracefully stops running loop
-- Sets `status = blocked` with reason
+- Sets `blocked_reason` in state
 - Preserves current state for resume
 
-**`anvil watch`**
-- Watches configured paths for changes
-- Auto-triggers on file modifications
-
-**`anvil daemon`**
-- Runs on timer interval
-- Background process mode
+**`anvil resume`**
+- Resumes from blocked/human_required state
+- Handles pending interactive questions
 
 ---
 
-## 6. Agent Invocation
+## 7. Interactive Mode
 
-### 6.1 Developer Agent (Claude Code CLI)
+Interactive mode enables real-time clarification between Claude and the user during development.
 
-**Invocation:**
-```bash
-claude --dangerously-skip-permissions \
-  --print \
-  --output-format json \
-  "Read .ai/SPEC.md for requirements and .ai/review-output.json for issues to fix. Implement the required changes."
+### 7.1 Configuration
+
+Enable interactive mode on a worker:
+
+```json
+{
+  "workers": {
+    "coder": {
+      "provider": "claude",
+      "interactive": true
+    }
+  }
+}
 ```
 
-**Agent Responsibilities:**
-1. Read `.ai/SPEC.md` for feature requirements
-2. Read `.ai/review-output.json` for issues (if exists)
-3. Make code changes
-4. Agent handles git operations internally
-5. Exit when work complete
+### 7.2 Flow
 
-**Output:**
-- Code changes committed to repo
-- Optional: annotations in `status.json.annotations`
-- Process exit signals completion to orchestrator
+When Claude uses the `AskUserQuestion` tool:
+1. Orchestrator detects the question in the stream
+2. Pauses execution and displays the question to the user
+3. Collects the user's answer via terminal input
+4. Resumes the session with the answer
 
-### 6.2 Reviewer Agent (Codex)
+### 7.3 Pending Questions
 
-**Invocation:**
-```bash
-# Orchestrator prepares context and invokes Codex API/CLI
-# Reviewer receives:
-# - Feature spec from .ai/SPEC.md
-# - Access to git diff
-# - Previous review history (if any)
+When a question is asked, it's recorded in `state.json`:
+
+```json
+{
+  "pending_question": {
+    "session_id": "abc123",
+    "question": "Which authentication method should be used?",
+    "options": [
+      {"label": "JWT tokens", "description": "Stateless, scalable"},
+      {"label": "Session cookies", "description": "Traditional, simpler"}
+    ],
+    "asked_at": "2024-01-15T10:30:45Z"
+  }
+}
 ```
 
-**Agent Responsibilities:**
-1. Read `.ai/SPEC.md` for requirements
-2. Analyze changes (via git diff)
-3. Evaluate against acceptance criteria
-4. Write structured output to `.ai/review-output.json`
-
-**Output:**
-- `.ai/review-output.json` with approval status, issues, confidence
+This allows resuming an interrupted session later with `anvil resume`.
 
 ---
 
-## 7. Human Intervention
+## 8. Human Intervention
 
-### 7.1 Request vs Enforcement
-
-- **Agents REQUEST** human intervention via their output files (`request_human: true`)
-- **Orchestrator DECIDES** whether to honor the request based on config rules
-- **Orchestrator RECORDS** the decision in `status.json` (`human_required: true`)
-- **Orchestrator ENFORCES** the stop by halting the loop
-
-### 7.2 Triggers
+### 8.1 Triggers
 
 The orchestrator sets `human_required: true` when:
 
-1. **Agent Request**: Reviewer sets `request_human: true` in output
+1. **Critical issues**: Reviewer reports issues with `severity: "critical"`
+2. **Very low confidence**: Reviewer's `confidence` score below 0.3
 
-2. **Security/Critical Issues**: Reviewer reports issues with `category: "security"` or `severity: "critical"`
+### 8.2 Resolution Flow
 
-3. **Low Confidence**: Reviewer's `confidence` score falls below threshold (default: 0.6)
-
-4. **Specific Categories**: Issues match categories configured in `config.json` (default: `security`, `architecture`)
-
-### 7.3 Resolution Flow
-
-1. Orchestrator sets `status = blocked`, `human_required = true`
-2. Human reviews `.ai/review-output.json` and code
-3. Human either:
-   - Fixes issues manually and runs `anvil start --resume`
-   - Adjusts SPEC.md and runs `anvil start --resume`
-   - Marks as complete: `anvil complete`
+1. Orchestrator sets `human_required = true`
+2. Human reviews state and code
+3. Human runs `anvil resume` to continue
 
 ---
 
-## 8. Error Handling
-
-### 8.1 Agent Failures
-
-When an agent process fails:
-
-1. **First failure**: Log error, retry immediately
-2. **Second failure**: Log error, retry with 5s delay
-3. **Third failure**: Log error, retry with 30s delay
-4. **Fourth failure**: Set `status = blocked`, require human intervention
-
-### 8.2 Recoverable Errors
-
-- Network timeouts
-- Rate limiting (auto-retry with backoff)
-- Temporary API unavailability
-
-### 8.3 Non-Recoverable Errors
-
-- Invalid API credentials
-- Repository corruption
-- Missing required files
-
----
-
-## 9. Logging
-
-### 9.1 Log Levels
-
-**Standard (default):**
-- State transitions
-- Agent invocations
-- Iteration counts
-- Errors and warnings
-
-**Output Format:**
-```
-[2024-01-15 10:30:45] [INFO] Starting iteration 3
-[2024-01-15 10:30:45] [INFO] Invoking developer agent
-[2024-01-15 10:32:12] [INFO] Developer agent completed
-[2024-01-15 10:32:12] [INFO] Status: needs_fix → needs_review
-[2024-01-15 10:32:13] [INFO] Invoking reviewer agent
-[2024-01-15 10:33:45] [INFO] Reviewer agent completed
-[2024-01-15 10:33:45] [INFO] Found 2 issues (1 high, 1 medium)
-[2024-01-15 10:33:45] [INFO] Status: needs_review → needs_fix
-```
-
-### 9.2 Log Location
-
-- Console output (stdout/stderr)
-- Optional: `.ai/logs/` directory for persistent logs
-
----
-
-## 10. Execution Phases
-
-### Phase 1 - Foundation (No LLMs)
-
-- [ ] Create project structure with `.ai/` directory
-- [ ] Implement Node.js orchestrator loop
-- [ ] Mock developer/reviewer agents (echo + sleep)
-- [ ] Validate state transitions
-- [ ] Validate stop conditions
-- [ ] Validate iteration limits
-- [ ] Implement CLI commands (`init`, `start`, `status`, `stop`)
-
-### Phase 2 - Real Agents
-
-- [ ] Integrate Claude Code CLI as developer
-- [ ] Integrate Codex as reviewer
-- [ ] Enforce structured JSON outputs
-- [ ] Implement retry logic with backoff
-- [ ] End-to-end test with real feature
-
-### Phase 3 - Trigger Modes
-
-- [ ] File watcher implementation
-- [ ] Timer/daemon mode
-- [ ] Graceful shutdown handling
-
-### Phase 4 - Hardening (Optional)
-
-- [ ] Persistent logging to files
-- [ ] Human intervention hooks
-- [ ] Test gate before review
-- [ ] Configurable log levels
-- [ ] Metrics and timing data
-
----
-
-## 11. Technical Requirements
-
-### 11.1 Runtime
-
-- Node.js 18+ (LTS)
-- npm or yarn
-
-### 11.2 External Dependencies
-
-- Claude Code CLI (installed and configured)
-- OpenAI API access for Codex (configured)
-- Git (for diff analysis)
-
-### 11.3 File Permissions
-
-- Read/write access to `.ai/` directory
-- Execute permission for agent CLIs
-
----
-
-## 12. Example Session
+## 9. Example Session
 
 ```bash
 # Initialize project
 $ anvil init
-Created .ai/config.json
-Created .ai/status.json
-Created .ai/SPEC.md (template)
+✓ Created .ai directory
+✓ Created config.json
 
-# Define feature
-$ anvil start "Add rate limiting to auth endpoints - 5 attempts/min/IP"
-[INFO] Feature written to .ai/SPEC.md
-[INFO] Starting iteration 1
-[INFO] Invoking developer agent...
-[INFO] Developer agent completed (47s)
-[INFO] Status: needs_fix → needs_review
-[INFO] Invoking reviewer agent...
-[INFO] Reviewer agent completed (12s)
-[INFO] Found 2 issues (1 high, 1 medium)
-[INFO] Status: needs_review → needs_fix
-[INFO] Starting iteration 2
-[INFO] Invoking developer agent...
-[INFO] Developer agent completed (31s)
-[INFO] Status: needs_fix → needs_review
-[INFO] Invoking reviewer agent...
-[INFO] Reviewer agent completed (10s)
-[INFO] Feature approved!
-[INFO] Status: needs_review → done
-[SUCCESS] Feature "auth-rate-limiting" completed in 2 iterations
+# Create a plan
+$ cat PLAN.md
+# Plan
+- [ ] Task 1: Setup project structure
+- [ ] Task 2: Add auth middleware
+- [ ] Task 3: Add rate limiting
 
-# Check final status
+# Start orchestration
+$ anvil start
+✓ Started new session (first worker: coder)
+Running orchestration loop...
+
+# Check status mid-run
 $ anvil status
-Feature: auth-rate-limiting
-Status: done
-Iterations: 2
-Last Actor: reviewer
+Turn: reviewer
+Iteration: 1
+Current Task: [1] Setup project structure (in_review)
+Completed Tasks: 0
+
+# Final result
+Orchestration completed successfully!
+Reason: Task completed (manual mode)
+Total Iterations: 2
+Turn: coder
+Completed Tasks: 3
+  - [1] Setup project structure
+  - [2] Add auth middleware
+  - [3] Add rate limiting
+Done: Yes
 ```
 
 ---
 
-## 13. Summary
+## 10. Technical Requirements
 
-Anvil is a Node.js-based orchestrator that coordinates Claude Code (developer) and Codex (reviewer) in a deterministic loop, using explicit state files instead of LLM memory, to iteratively develop and review code with minimal human intervention.
+### 10.1 Runtime
+
+- Node.js 20+ (LTS)
+- npm
+
+### 10.2 External Dependencies
+
+- Claude Code CLI (for `claude` provider)
+- Codex CLI (for `codex` provider)
+- Git (for diff analysis and commits)
+
+### 10.3 Project Dependencies
+
+- `zod` — Runtime schema validation
+- `commander` — CLI framework
+- `execa` — Subprocess execution
+- `chalk` — Terminal formatting
+- `ora` — Spinners
+- `pino` — Logging
+
+---
+
+## 11. Source Structure
+
+```
+src/
+├── agents/
+│   ├── types.ts              # Worker interface, WorkerResult, DetectedQuestion
+│   ├── factory.ts            # Provider registry (createWorker, createWorkers)
+│   ├── index.ts              # Barrel exports
+│   └── providers/
+│       ├── claude.ts          # Claude Code CLI worker + stream parsing
+│       ├── codex.ts           # Codex CLI worker
+│       └── mock.ts            # Configurable mock worker
+├── cli/
+│   ├── index.ts              # Commander.js CLI setup
+│   ├── output.ts             # Terminal formatting
+│   ├── user-input.ts         # Interactive question prompts
+│   └── commands/
+│       ├── init.ts
+│       ├── start.ts
+│       ├── status.ts
+│       ├── stop.ts
+│       └── resume.ts
+├── core/
+│   ├── state-machine.ts      # Turn-based state transitions
+│   ├── orchestrator.ts       # Main orchestration loop
+│   ├── factory.ts            # Dependency injection factory
+│   ├── prompt-builder.ts     # Builds prompts from role + state + plan + schema
+│   ├── output-parser.ts      # Parses and validates worker JSON output
+│   └── index.ts              # Barrel exports
+├── files/
+│   ├── ai-directory.ts       # .ai directory management
+│   ├── status.ts             # state.json CRUD
+│   ├── config.ts             # config.json CRUD
+│   └── index.ts              # Barrel exports
+├── logger/
+│   └── index.ts              # Pino logger
+├── types/
+│   ├── config.ts             # Config schema (workers, workflow, plan_file)
+│   └── status.ts             # Status schema (turn, current_task, completed_tasks)
+├── utils/
+│   └── errors.ts             # Custom error classes
+└── index.ts                  # Public API exports
+
+tests/
+├── unit/
+│   ├── state-machine.test.ts
+│   ├── prompt-builder.test.ts
+│   ├── output-parser.test.ts
+│   └── providers.test.ts
+└── integration/
+    └── orchestrator.test.ts
+```
+
+---
+
+## 12. Summary
+
+Anvil is a Node.js-based orchestrator that coordinates generic workers (defined by config, not code) in a turn-based loop, using a shared state file and pure JSON worker output to iteratively implement and review tasks from a plan file.
 
 **Key Properties:**
-- Local execution, no cloud CI dependency
-- State-driven, fully inspectable and restartable
-- Multi-provider LLM architecture
-- Safe parallel execution across repos
-- Clear role separation between agents
+- Generic worker architecture — add workers by config, not code
+- Turn-based orchestration with configurable workflow
+- Pure JSON worker output — no heuristic parsing
+- Shared state file as the single communication channel
+- Commits happen after reviewer approves
+- Local execution, fully inspectable and restartable

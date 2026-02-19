@@ -1,17 +1,17 @@
-Project: Local Multi-Agent Dev ↔ Review Orchestration
+Project: Local Multi-Agent Orchestration with Generic Workers
 
 1. Goal / What We Want
 
-We want to build a local, deterministic, multi-agent system that continuously loops between code development and code review with minimal human intervention.
+We want to build a local, deterministic, multi-agent system that coordinates generic workers in a turn-based loop with minimal human intervention.
 
 The system should:
 	•	Work locally (no GitHub Actions, no CI dependency)
 	•	Support multiple repositories in parallel, without cross-repo pollution
-	•	Use multiple LLM providers with clear role separation
+	•	Use configurable workers with clear role separation
 	•	Loop automatically:
-    Develop → Review → Fix → Review → … → Done
+    Code → Review → Fix → Review → … → Done
 	•	Stop safely when:
-	•	The feature is approved
+	•	A task is approved
 	•	A maximum iteration limit is reached
 	•	Human intervention is explicitly required
 
@@ -22,175 +22,113 @@ It is a controlled orchestration system where LLMs act as tools.
 
 2. High-Level Architecture
 
-Roles
-	•	Claude Code → Developer
-	•	Writes and modifies code
-	•	Fixes issues reported by the reviewer
-	•	Does NOT decide workflow or quality
-	•	Codex → Reviewer / Planner
-	•	Reviews diffs and tests
-	•	Reports remaining issues or approves
-	•	Does NOT write code
-	•	Orchestrator → Controller (non-LLM)
-	•	Owns the state machine
-	•	Decides which agent runs next
-	•	Enforces iteration limits and stop conditions
-	•	Injects context and parses structured outputs
+Components
+	•	Workers — Generic agents defined by config (provider + role + output_schema)
+	  •	Receive a prompt, return JSON output
+	  •	Never decide workflow — just execute and report
+	•	Orchestrator — Dumb state machine (non-LLM)
+	  •	Calls workers based on `turn` from state file
+	  •	Parses JSON output, updates shared state
+	  •	Handles commits after reviewer approves
+
+Default Workers
+	•	Coder (Claude Code CLI) — Implements tasks from the plan
+	•	Reviewer (Codex CLI) — Reviews changes for correctness and quality
+
+Communication Model
+	•	No worker-to-worker direct communication
+	•	Workers receive state context via prompt (built by orchestrator)
+	•	Orchestrator owns the state file — workers never write to it
+	•	Worker output is pure JSON
+
+⸻
 
 3. Core Design Principles
-	1.	Stateless LLM Calls
-	•	Every agent invocation starts with a fresh context window
-	•	Continuity is achieved via external state, not chat memory
-	2.	Externalized State
-	•	All workflow state lives in files (not in LLM memory)
-	•	Deterministic, inspectable, restartable at any point
-	3.	No Agent-to-Agent Direct Chat
-	•	Agents “communicate” indirectly via:
-	•	Repo changes
-	•	Structured outputs
-	•	Shared state file
-	4.	One Repo = One Isolated Loop
-	•	No shared memory, no cross-pollution
-	•	Parallel execution is safe by design
+
+	1.	Workers are dumb
+	  •	Each worker receives a prompt and returns JSON
+	  •	Workers don't know about workflow, state, or other workers
+	2.	Orchestrator is a dumb state machine
+	  •	Reads state.json, determines whose turn it is
+	  •	Builds prompt with role + plan + state + output schema
+	  •	Calls worker, parses JSON output, updates state
+	3.	Externalized State
+	  •	All workflow state lives in state.json (not in LLM memory)
+	  •	Deterministic, inspectable, restartable at any point
+	4.	Pure JSON Output
+	  •	Workers return structured JSON matching their output_schema
+	  •	No heuristic parsing, no markdown extraction
+	5.	Config-driven workers
+	  •	Workers defined by provider + role + output_schema in config.json
+	  •	Add new workers by editing config, not code
+	6.	One Repo = One Isolated Loop
+	  •	No shared memory, no cross-pollution
+	  •	Parallel execution is safe by design
 
 ⸻
 
-4. Minimal State Model (Per Repo)
+4. Data Model
 
-Each repository contains its own AI control directory:
-.ai/
-  ├── state.json
-  ├── context.md
+config.json (per-repo, user-managed)
+	•	`workers` map — keyed by role name (e.g., "coder", "reviewer")
+	  •	Each worker: provider, role, model?, interactive?, output_schema
+	•	`plan_file` — path to the plan file (e.g., "./PLAN.md")
+	•	`workflow` — array of worker names defining turn order
+	•	`loop_mode` — "auto" (continuous) or "manual" (pause after each task)
+	•	`max_iterations_per_task` — iteration cap per task
 
-state.json (single source of truth)
-{
-  "feature_id": "auth-rate-limiting",
-  "status": "needs_fix",
-  "iteration": 2,
-  "max_iterations": 6,
-  "issues": [
-    {
-      "id": "R1",
-      "severity": "high",
-      "description": "Rate limiter is not concurrency-safe"
-    }
-  ],
-  "last_actor": "reviewer",
-  "human_required": false,
-  "done": false
-}
-
-Valid statuses:
-	•	needs_fix
-	•	needs_review
-	•	done
-	•	blocked
+state.json (orchestrator-owned)
+	•	`turn` — which worker runs next
+	•	`current_task` — task being worked on (id, description, status)
+	•	`completed_tasks` — array of finished tasks
+	•	`review_issues` — issues from the last review
+	•	`iteration` — current iteration count (resets per task)
+	•	`done`, `human_required`, `blocked_reason`
 
 ⸻
 
-5. Orchestrator (What It Is)
+5. Key Technical Decisions
 
-The orchestrator is the central component.
-
-It is:
-	•	A small Node.js program
-	•	Deterministic
-	•	Non-LLM
-	•	The only component allowed to mutate workflow state
-
-Responsibilities
-	•	Load and save .ai/state.json
-	•	Decide which agent to invoke next
-	•	Invoke:
-	•	Claude Code CLI (developer)
-	•	Codex API (reviewer)
-	•	Validate agent outputs
-	•	Enforce:
-	•	Max iterations
-	•	Human-required stops
-	•	Run on a timer or manual trigger
-
-Important:
-The orchestrator does no reasoning about code quality.
-All judgment lives in the reviewer agent.
-
-⸻
-
-6. Key Technical Decisions (Final)
-
-✅ Language Choice
-
-Node.js was chosen for the orchestrator because:
+✅ Language: Node.js
 	•	Excellent for I/O-bound orchestration
-	•	Clean subprocess handling (Claude Code CLI)
+	•	Clean subprocess handling
 	•	Native JSON handling
-	•	Simple async scheduling
-	•	Minimal runtime overhead
-	•	Deterministic single-threaded execution
 
-Python and Elixir were considered, but Node.js is the best fit for a first, stable implementation.
+✅ Architecture: Turn-based state machine
+	•	More predictable than agent-supervisor models
+	•	Easier to debug and restart
+	•	Workflow defined by config, not code
 
-✅ Architecture Choice
-
-We chose a state-driven orchestrator architecture, not an agent-supervisor model.
-
-Why:
-	•	More predictable
-	•	Easier to debug
-	•	Easier to restart
-	•	Avoids “agent over-reasoning”
-	•	Scales cleanly across repos
+✅ Worker output: Pure JSON
+	•	Output schema included in every prompt
+	•	Orchestrator validates output against schema
+	•	No heuristic/regex parsing
 
 ⸻
 
-7. Execution Plan
+6. Execution Phases
 
-Phase 1 — Foundation (No LLMs)
-	•	Create repo layout with .ai/state.json
-	•	Implement Node.js orchestrator loop
-	•	Mock developer/reviewer agents
-	•	Validate:
-	•	State transitions
-	•	Stop conditions
-	•	Iteration limits
+Phase 1 — Foundation (Complete)
+	•	Project structure with .ai/ directory
+	•	State machine with turn-based transitions
+	•	Mock workers for testing
+	•	CLI commands (init, start, status, stop, resume)
+	•	60 passing tests
 
-Phase 2 — Real Agents
-	•	Integrate Claude Code as developer
-	•	Integrate Codex as reviewer
-	•	Enforce structured JSON outputs
-	•	Keep prompts minimal and role-strict
+Phase 2 — Real Workers (Complete)
+	•	Claude Code CLI worker (interactive + non-interactive)
+	•	Codex CLI worker
+	•	Generic prompt builder with output schema
+	•	Pure JSON output parser with validation
 
-Phase 3 — Parallel Repos
-	•	Run one orchestrator instance per repo
-	•	Add basic rate limiting
-	•	Optional file locks on state.json
-
-Phase 4 — Hardening (Optional)
-	•	Logging & replay
-	•	Human intervention hooks
-	•	Test gate before review
-	•	Promotion to long-running service if needed
+Phase 3 — Future
+	•	File watcher / daemon trigger modes
+	•	Persistent logging
+	•	Configurable human intervention rules
+	•	Additional provider types
 
 ⸻
 
-8. What This System Is (and Is Not)
+7. Summary
 
-This system is:
-	•	A local AI development assistant
-	•	Deterministic and restartable
-	•	Multi-provider by design
-	•	Safe to run in parallel
-
-This system is NOT:
-	•	A chatbot
-	•	A fully autonomous AI
-	•	A CI replacement
-	•	A magic code generator
-
-⸻
-
-9. One-Sentence Summary
-
-We are building a local, Node.js-based orchestrator that coordinates Claude Code (developer) and Codex (reviewer) in a deterministic loop, using explicit state files instead of LLM memory, to iteratively develop and review code across multiple repositories without cross-pollution.
-
-
+Anvil is a local, Node.js-based orchestrator that coordinates generic workers in a turn-based loop, using a shared state file and pure JSON output to iteratively implement and review tasks from a plan file, with minimal human intervention.

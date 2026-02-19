@@ -1,158 +1,87 @@
-import type { WorkflowStatus, Status, StateTransition } from '../types/status.js';
+import type { Status } from '../types/status.js';
 import type { Config } from '../types/config.js';
-import type { ReviewOutput } from '../types/review.js';
-import { StateTransitionError } from '../utils/errors.js';
-
-export type TransitionTrigger =
-  | 'developer_complete'
-  | 'issues_found'
-  | 'approved'
-  | 'blocked'
-  | 'human_required'
-  | 'resume';
-
-const VALID_TRANSITIONS: StateTransition[] = [
-  { from: 'needs_fix', to: 'needs_review', trigger: 'developer_complete' },
-  { from: 'needs_review', to: 'needs_fix', trigger: 'issues_found' },
-  { from: 'needs_review', to: 'done', trigger: 'approved' },
-  { from: 'needs_fix', to: 'blocked', trigger: 'blocked' },
-  { from: 'needs_review', to: 'blocked', trigger: 'blocked' },
-  { from: 'needs_fix', to: 'blocked', trigger: 'human_required' },
-  { from: 'needs_review', to: 'blocked', trigger: 'human_required' },
-  { from: 'blocked', to: 'needs_fix', trigger: 'resume' },
-];
+import type { ReviewerOutput } from './output-parser.js';
 
 export class StateMachine {
-  private readonly transitions: StateTransition[];
+  /**
+   * Get the next worker name from state.turn, or null if done/stopped.
+   */
+  getNextWorker(state: Status, workflow: string[]): string | null {
+    if (state.done) return null;
+    if (state.human_required) return null;
+    if (state.blocked_reason) return null;
 
-  constructor() {
-    this.transitions = VALID_TRANSITIONS;
+    // Validate turn is in workflow
+    if (!workflow.includes(state.turn)) return null;
+
+    return state.turn;
   }
 
-  canTransition(from: WorkflowStatus, to: WorkflowStatus): boolean {
-    return this.transitions.some((t) => t.from === from && t.to === to);
+  /**
+   * Advance turn to the next worker in the workflow array.
+   */
+  getNextTurn(currentTurn: string, workflow: string[]): string {
+    const idx = workflow.indexOf(currentTurn);
+    if (idx === -1 || idx === workflow.length - 1) {
+      return workflow[0]!;
+    }
+    return workflow[idx + 1]!;
   }
 
-  getValidNextStates(current: WorkflowStatus): WorkflowStatus[] {
-    return [...new Set(
-      this.transitions
-        .filter((t) => t.from === current)
-        .map((t) => t.to)
-    )];
-  }
-
-  transition(
-    status: Status,
-    to: WorkflowStatus,
-    _trigger: TransitionTrigger
-  ): Status {
-    if (!this.canTransition(status.status, to)) {
-      throw new StateTransitionError(status.status, to);
-    }
-
-    const now = new Date().toISOString();
-    const newStatus: Status = {
-      ...status,
-      status: to,
-      updated_at: now,
-    };
-
-    if (to === 'done') {
-      newStatus.done = true;
-    }
-
-    return newStatus;
-  }
-
-  shouldRequestHumanIntervention(
-    reviewOutput: ReviewOutput,
-    config: Config
-  ): { required: boolean; reason?: string } {
-    // Check explicit request from reviewer
-    if (reviewOutput.request_human) {
-      return { required: true, reason: 'Reviewer requested human intervention' };
-    }
-
-    // Check low confidence
-    const threshold = config.human_required_on.low_confidence_threshold;
-    if (reviewOutput.confidence < threshold) {
-      return {
-        required: true,
-        reason: `Confidence ${reviewOutput.confidence.toFixed(2)} below threshold ${threshold}`,
-      };
-    }
-
-    // Check security issues
-    if (config.human_required_on.security_issues) {
-      const securityIssue = reviewOutput.issues.find(
-        (i) => i.category === 'security' || i.severity === 'critical'
-      );
-      if (securityIssue) {
-        return {
-          required: true,
-          reason: `Security/critical issue found: ${securityIssue.description}`,
-        };
-      }
-    }
-
-    // Check specific categories
-    const triggerCategories = config.human_required_on.categories;
-    const matchingIssue = reviewOutput.issues.find((i) =>
-      triggerCategories.includes(i.category)
-    );
-    if (matchingIssue) {
-      return {
-        required: true,
-        reason: `Issue in monitored category '${matchingIssue.category}': ${matchingIssue.description}`,
-      };
-    }
-
-    return { required: false };
-  }
-
+  /**
+   * Check if the orchestrator should stop.
+   */
   shouldStop(
-    status: Status,
+    state: Status,
     config: Config
   ): { stop: boolean; reason?: string } {
-    // Already done
-    if (status.done || status.status === 'done') {
-      return { stop: true, reason: 'Feature approved' };
+    if (state.done) {
+      return { stop: true, reason: 'All tasks completed' };
     }
 
-    // Blocked
-    if (status.status === 'blocked') {
-      return { stop: true, reason: status.blocked_reason ?? 'Blocked' };
+    if (state.blocked_reason) {
+      return { stop: true, reason: state.blocked_reason };
     }
 
-    // Human required
-    if (status.human_required) {
+    if (state.human_required) {
       return { stop: true, reason: 'Human intervention required' };
     }
 
-    // Max iterations
-    if (status.iteration >= config.max_iterations) {
+    if (state.iteration >= config.max_iterations_per_task) {
       return {
         stop: true,
-        reason: `Maximum iterations reached (${status.iteration}/${config.max_iterations})`,
+        reason: `Maximum iterations per task reached (${state.iteration}/${config.max_iterations_per_task})`,
       };
     }
 
     return { stop: false };
   }
 
-  determineNextAction(
-    status: Status
-  ): 'invoke_developer' | 'invoke_reviewer' | 'stop' {
-    switch (status.status) {
-      case 'needs_fix':
-        return 'invoke_developer';
-      case 'needs_review':
-        return 'invoke_reviewer';
-      case 'done':
-      case 'blocked':
-        return 'stop';
-      default:
-        return 'stop';
+  /**
+   * Check if reviewer output warrants human intervention.
+   */
+  shouldRequestHumanIntervention(
+    reviewerOutput: ReviewerOutput
+  ): { required: boolean; reason?: string } {
+    // Critical issues require human
+    const critical = reviewerOutput.issues.find(
+      (i) => i.severity === 'critical'
+    );
+    if (critical) {
+      return {
+        required: true,
+        reason: `Critical issue found: ${critical.description}`,
+      };
     }
+
+    // Very low confidence
+    if (reviewerOutput.confidence < 0.3) {
+      return {
+        required: true,
+        reason: `Very low confidence: ${reviewerOutput.confidence.toFixed(2)}`,
+      };
+    }
+
+    return { required: false };
   }
 }

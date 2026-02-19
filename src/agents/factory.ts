@@ -1,38 +1,32 @@
-import type { Config } from '../types/config.js';
-import type { AgentFactory, DeveloperAgent, ReviewerAgent } from './types.js';
-import { MockDeveloperAgent } from './mock/developer.js';
-import { MockReviewerAgent } from './mock/reviewer.js';
-import { ClaudeDeveloperAgent } from './real/claude-developer.js';
-import { CodexReviewerAgent } from './real/codex-reviewer.js';
+import type { Worker } from './types.js';
+import type { WorkerConfig } from '../types/config.js';
+import { MockWorker } from './providers/mock.js';
+import { ClaudeWorker } from './providers/claude.js';
+import { CodexWorker } from './providers/codex.js';
 
-export class DefaultAgentFactory implements AgentFactory {
-  createDeveloper(config: Config): DeveloperAgent {
-    const agentConfig = config.agents.developer;
-
-    switch (agentConfig.type) {
-      case 'mock':
-        return new MockDeveloperAgent();
-      case 'claude':
-        return new ClaudeDeveloperAgent({
-          timeoutMs: agentConfig.timeout_seconds * 1000,
-        });
-      default:
-        throw new Error(`Unknown developer agent type: ${agentConfig.type}`);
-    }
+export function createWorker(name: string, config: WorkerConfig): Worker {
+  switch (config.provider) {
+    case 'mock':
+      return new MockWorker(name);
+    case 'claude':
+      return new ClaudeWorker(name, {
+        model: config.model,
+        interactive: config.interactive,
+      });
+    case 'codex':
+      return new CodexWorker(name, {
+        model: config.model,
+        outputSchema: config.output_schema,
+      });
+    default:
+      throw new Error(`Unknown provider: ${config.provider}`);
   }
+}
 
-  createReviewer(config: Config): ReviewerAgent {
-    const agentConfig = config.agents.reviewer;
-
-    switch (agentConfig.type) {
-      case 'mock':
-        return new MockReviewerAgent();
-      case 'codex':
-        return new CodexReviewerAgent({
-          timeoutMs: agentConfig.timeout_seconds * 1000,
-        });
-      default:
-        throw new Error(`Unknown reviewer agent type: ${agentConfig.type}`);
-    }
+export function createWorkers(workersConfig: Record<string, WorkerConfig>): Map<string, Worker> {
+  const workers = new Map<string, Worker>();
+  for (const [name, config] of Object.entries(workersConfig)) {
+    workers.set(name, createWorker(name, config));
   }
+  return workers;
 }

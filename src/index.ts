@@ -1,40 +1,33 @@
 // Types
-export type { Status, WorkflowStatus, Actor, StateTransition } from './types/status.js';
-export type { Config, TriggerMode, IssueCategory } from './types/config.js';
-export type { ReviewOutput, ReviewIssue, IssueSeverity } from './types/review.js';
+export type { Status, CurrentTask, ReviewIssue, PendingQuestion, QuestionOption } from './types/status.js';
+export type { Config, WorkerConfig, Provider, LoopMode } from './types/config.js';
 
 // Schemas
-export { StatusSchema, WorkflowStatusSchema, ActorSchema, createInitialStatus } from './types/status.js';
-export { ConfigSchema, TriggerModeSchema, IssueCategorySchema, getDefaultConfig } from './types/config.js';
-export { ReviewOutputSchema, ReviewIssueSchema, IssueSeveritySchema } from './types/review.js';
+export { StatusSchema, CurrentTaskSchema, ReviewIssueSchema, PendingQuestionSchema, createInitialStatus } from './types/status.js';
+export { ConfigSchema, WorkerConfigSchema, ProviderSchema, LoopModeSchema, getDefaultConfig } from './types/config.js';
 
 // Core
 export { StateMachine } from './core/state-machine.js';
 export { Orchestrator } from './core/orchestrator.js';
-export type { OrchestratorResult, IterationResult, OrchestratorDependencies } from './core/orchestrator.js';
+export type { OrchestratorResult, OrchestratorDependencies } from './core/orchestrator.js';
 export { createAnvilContext, createOrchestrator } from './core/factory.js';
 export type { AnvilContext } from './core/factory.js';
+export { buildPrompt } from './core/prompt-builder.js';
+export type { PromptContext } from './core/prompt-builder.js';
+export { parseOutput, validateCoderOutput, validateReviewerOutput } from './core/output-parser.js';
+export type { CoderOutput, ReviewerOutput, ReviewerIssue as ReviewerOutputIssue } from './core/output-parser.js';
 
 // Files
 export { AiDirectory, AI_DIR_NAME } from './files/ai-directory.js';
 export { StatusFile, STATUS_FILE_NAME } from './files/status.js';
 export { ConfigFile, CONFIG_FILE_NAME } from './files/config.js';
-export { SpecFile, SPEC_FILE_NAME } from './files/spec.js';
-export { ReviewOutputFile, REVIEW_OUTPUT_FILE_NAME } from './files/review-output.js';
 
 // Agents
-export type {
-  AgentContext,
-  AgentResult,
-  DeveloperAgentResult,
-  ReviewerAgentResult,
-  DeveloperAgent,
-  ReviewerAgent,
-  AgentFactory,
-} from './agents/types.js';
-export { MockDeveloperAgent } from './agents/mock/developer.js';
-export { MockReviewerAgent } from './agents/mock/reviewer.js';
-export { DefaultAgentFactory } from './agents/factory.js';
+export type { Worker, WorkerResult, DetectedQuestion, QuestionHandler } from './agents/types.js';
+export { MockWorker } from './agents/providers/mock.js';
+export { ClaudeWorker } from './agents/providers/claude.js';
+export { CodexWorker } from './agents/providers/codex.js';
+export { createWorker, createWorkers } from './agents/factory.js';
 
 // Logger
 export { createLogger, getLogger, setLogger } from './logger/index.js';

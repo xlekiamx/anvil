@@ -11,7 +11,6 @@ export function createStopCommand(): Command {
       try {
         const context = createAnvilContext(options.path);
 
-        // Check if initialized
         if (!(await context.aiDir.exists())) {
           printError('.ai directory not found. Run "anvil init" first.');
           process.exit(1);
@@ -29,14 +28,12 @@ export function createStopCommand(): Command {
           return;
         }
 
-        if (status.status === 'blocked') {
+        if (status.blocked_reason) {
           printInfo('Session already blocked.');
           return;
         }
 
-        // Update status to blocked
         await context.statusFile.update({
-          status: 'blocked',
           blocked_reason: options.reason,
         });
 

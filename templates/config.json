@@ -1,28 +1,27 @@
 {
-  "max_iterations": 6,
-  "trigger": {
-    "mode": "manual",
-    "watch_paths": [".ai/SPEC.md"],
-    "interval_seconds": 300
-  },
-  "tests": {
-    "enabled": false,
-    "command": "npm test",
-    "required_to_pass": false
-  },
-  "human_required_on": {
-    "security_issues": true,
-    "low_confidence_threshold": 0.6,
-    "categories": ["security", "architecture"]
-  },
-  "agents": {
-    "developer": {
-      "type": "mock",
-      "timeout_seconds": 300
+  "workers": {
+    "coder": {
+      "provider": "claude",
+      "role": "You are a senior developer. Implement tasks from the plan.",
+      "interactive": true,
+      "output_schema": {
+        "task_id": "string",
+        "task_description": "string",
+        "status": "completed | needs_review"
+      }
     },
     "reviewer": {
-      "type": "mock",
-      "timeout_seconds": 120
+      "provider": "codex",
+      "role": "You are a code reviewer. Review changes for correctness, security, and quality.",
+      "output_schema": {
+        "approved": "boolean",
+        "issues": [{ "description": "string", "severity": "critical | high | medium | low" }],
+        "confidence": "number 0-1"
+      }
     }
-  }
+  },
+  "plan_file": "./PLAN.md",
+  "workflow": ["coder", "reviewer"],
+  "loop_mode": "auto",
+  "max_iterations_per_task": 6
 }

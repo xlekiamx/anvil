@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { createAnvilContext } from '../../core/factory.js';
-import { formatStatus, formatReviewOutput, printError, printInfo } from '../output.js';
+import { formatStatus, printError, printInfo } from '../output.js';
 
 export function createStatusCommand(): Command {
   return new Command('status')
@@ -30,13 +30,6 @@ export function createStatusCommand(): Command {
         }
 
         console.log(formatStatus(status));
-
-        // Show review output if exists
-        const reviewOutput = await context.reviewOutputFile.read();
-        if (reviewOutput) {
-          console.log('');
-          console.log(formatReviewOutput(reviewOutput));
-        }
       } catch (error) {
         printError(`Failed: ${(error as Error).message}`);
         process.exit(1);

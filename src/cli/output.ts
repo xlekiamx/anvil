@@ -1,15 +1,25 @@
 import chalk from 'chalk';
 import type { Status } from '../types/status.js';
-import type { ReviewOutput } from '../types/review.js';
 import type { OrchestratorResult } from '../core/orchestrator.js';
 
 export function formatStatus(status: Status): string {
   const lines: string[] = [];
 
-  lines.push(chalk.bold('Feature:') + ` ${status.feature_id}`);
-  lines.push(chalk.bold('Status:') + ` ${formatStatusBadge(status.status)}`);
+  lines.push(chalk.bold('Turn:') + ` ${status.turn}`);
   lines.push(chalk.bold('Iteration:') + ` ${status.iteration}`);
-  lines.push(chalk.bold('Last Actor:') + ` ${status.last_actor}`);
+
+  if (status.current_task) {
+    lines.push(chalk.bold('Current Task:') + ` [${status.current_task.id}] (${status.current_task.status})`);
+  } else {
+    lines.push(chalk.bold('Current Task:') + ` None`);
+  }
+
+  lines.push(chalk.bold('Completed Tasks:') + ` ${status.completed_tasks.length}`);
+  if (status.completed_tasks.length > 0) {
+    for (const taskId of status.completed_tasks) {
+      lines.push(`  - [${taskId}]`);
+    }
+  }
 
   if (status.done) {
     lines.push(chalk.green.bold('Done: Yes'));
@@ -20,64 +30,22 @@ export function formatStatus(status: Status): string {
   }
 
   if (status.blocked_reason) {
-    lines.push(chalk.red.bold('Blocked Reason:') + ` ${status.blocked_reason}`);
+    lines.push(chalk.red.bold('Blocked:') + ` ${status.blocked_reason}`);
   }
 
-  if (status.annotations) {
-    lines.push(chalk.bold('Annotations:') + ` ${status.annotations}`);
+  if (status.review_issues.length > 0) {
+    lines.push('');
+    lines.push(chalk.bold(`Review Issues (${status.review_issues.length}):`));
+    for (const issue of status.review_issues) {
+      const severity = formatSeverity(issue.severity);
+      lines.push(`  ${severity} ${issue.description}`);
+    }
   }
 
   if (status.started_at) {
     lines.push(chalk.dim('Started:') + ` ${status.started_at}`);
   }
-
   lines.push(chalk.dim('Updated:') + ` ${status.updated_at}`);
-
-  return lines.join('\n');
-}
-
-export function formatStatusBadge(status: string): string {
-  switch (status) {
-    case 'needs_fix':
-      return chalk.yellow(status);
-    case 'needs_review':
-      return chalk.blue(status);
-    case 'done':
-      return chalk.green(status);
-    case 'blocked':
-      return chalk.red(status);
-    default:
-      return status;
-  }
-}
-
-export function formatReviewOutput(review: ReviewOutput): string {
-  const lines: string[] = [];
-
-  lines.push(chalk.bold('Review Result'));
-  lines.push(
-    chalk.bold('Approved:') +
-      ` ${review.approved ? chalk.green('Yes') : chalk.red('No')}`
-  );
-  lines.push(chalk.bold('Confidence:') + ` ${(review.confidence * 100).toFixed(0)}%`);
-  lines.push(chalk.bold('Summary:') + ` ${review.summary}`);
-
-  if (review.issues.length > 0) {
-    lines.push('');
-    lines.push(chalk.bold(`Issues (${review.issues.length}):`));
-    for (const issue of review.issues) {
-      const severity = formatSeverity(issue.severity);
-      const location = issue.file
-        ? ` (${issue.file}${issue.line ? `:${issue.line}` : ''})`
-        : '';
-      lines.push(`  ${severity} [${issue.category}] ${issue.description}${location}`);
-    }
-  }
-
-  if (review.request_human) {
-    lines.push('');
-    lines.push(chalk.yellow.bold('Human intervention requested'));
-  }
 
   return lines.join('\n');
 }

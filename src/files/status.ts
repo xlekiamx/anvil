@@ -4,7 +4,7 @@ import { StatusSchema, type Status, createInitialStatus } from '../types/status.
 import { FileError, ValidationError } from '../utils/errors.js';
 import type { Logger } from '../logger/index.js';
 
-export const STATUS_FILE_NAME = 'status.json';
+export const STATUS_FILE_NAME = 'state.json';
 
 export class StatusFile {
   public readonly path: string;
@@ -42,25 +42,24 @@ export class StatusFile {
     const validated = this.validate(status);
     const content = JSON.stringify(validated, null, 2);
 
-    // Atomic write: write to temp file then rename
     const tempPath = `${this.path}.tmp`;
     await fs.writeFile(tempPath, content, 'utf-8');
     await fs.rename(tempPath, this.path);
 
-    this.logger.debug({ path: this.path }, 'Wrote status file');
+    this.logger.debug({ path: this.path }, 'Wrote state file');
   }
 
-  async initialize(featureId: string): Promise<Status> {
-    const status = createInitialStatus(featureId);
+  async initialize(planFile: string, firstWorker: string): Promise<Status> {
+    const status = createInitialStatus(planFile, firstWorker);
     await this.write(status);
-    this.logger.info({ featureId }, 'Initialized status file');
+    this.logger.info({ planFile, firstWorker }, 'Initialized state file');
     return status;
   }
 
   async update(updates: Partial<Status>): Promise<Status> {
     const current = await this.read();
     if (!current) {
-      throw new FileError('Status file not found', this.path);
+      throw new FileError('State file not found', this.path);
     }
 
     const updated: Status = {
@@ -73,17 +72,13 @@ export class StatusFile {
     return updated;
   }
 
-  async updateAnnotations(annotations: string): Promise<Status> {
-    return this.update({ annotations });
-  }
-
   private validate(data: unknown): Status {
     const result = StatusSchema.safeParse(data);
     if (!result.success) {
       const issues = result.error.issues.map(
         (i) => `${i.path.join('.')}: ${i.message}`
       );
-      throw new ValidationError('Invalid status file', issues);
+      throw new ValidationError('Invalid state file', issues);
     }
     return result.data;
   }

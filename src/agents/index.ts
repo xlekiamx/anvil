@@ -1,15 +1,5 @@
-export type {
-  AgentContext,
-  AgentResult,
-  DeveloperAgentResult,
-  ReviewerAgentResult,
-  DeveloperAgent,
-  ReviewerAgent,
-  AgentFactory,
-} from './types.js';
-
-export { MockDeveloperAgent } from './mock/developer.js';
-export { MockReviewerAgent } from './mock/reviewer.js';
-export { ClaudeDeveloperAgent } from './real/claude-developer.js';
-export { CodexReviewerAgent } from './real/codex-reviewer.js';
-export { DefaultAgentFactory } from './factory.js';
+export type { Worker, WorkerResult, DetectedQuestion, QuestionHandler } from './types.js';
+export { MockWorker } from './providers/mock.js';
+export { ClaudeWorker } from './providers/claude.js';
+export { CodexWorker } from './providers/codex.js';
+export { createWorker, createWorkers } from './factory.js';
