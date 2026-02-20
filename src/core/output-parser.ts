@@ -11,6 +11,7 @@ export interface ReviewerIssue {
 export interface ReviewerOutput {
   approved: boolean;
   done: boolean;
+  completed_tasks: string[];
   issues: ReviewerIssue[];
   confidence: number;
 }
@@ -84,9 +85,16 @@ export function validateReviewerOutput(parsed: Record<string, unknown>): Reviewe
     };
   });
 
+  let completed_tasks: string[] = [];
+  if (Array.isArray(parsed.completed_tasks)) {
+    completed_tasks = parsed.completed_tasks
+      .filter((t: unknown): t is string => typeof t === 'string' && t.length > 0);
+  }
+
   return {
     approved: parsed.approved,
     done: typeof parsed.done === 'boolean' ? parsed.done : false,
+    completed_tasks,
     issues,
     confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.7,
   };

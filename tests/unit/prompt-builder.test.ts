@@ -10,7 +10,6 @@ function makeCoderConfig(): WorkerConfig {
     interactive: false,
     output_schema: {
       task_id: 'string',
-      task_description: 'string',
       status: 'completed | needs_review',
     },
   };
@@ -34,118 +33,104 @@ describe('buildPrompt', () => {
     const ctx: PromptContext = {
       workerConfig: makeCoderConfig(),
       state: createInitialStatus('./PLAN.md', 'coder'),
-      planContent: '# Plan\n- Task 1',
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+      isFirstWorker: true,
     };
 
     const prompt = buildPrompt(ctx);
     expect(prompt).toContain('You are a senior developer.');
   });
 
-  it('includes plan content', () => {
+  it('tells coder to read plan and state files', () => {
     const ctx: PromptContext = {
       workerConfig: makeCoderConfig(),
       state: createInitialStatus('./PLAN.md', 'coder'),
-      planContent: '# My Plan\n- Implement feature X',
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+      isFirstWorker: true,
     };
 
     const prompt = buildPrompt(ctx);
-    expect(prompt).toContain('# My Plan');
-    expect(prompt).toContain('Implement feature X');
+    expect(prompt).toContain('/repo/PLAN.md');
+    expect(prompt).toContain('/repo/.ai/state.json');
   });
 
   it('includes output schema hint', () => {
     const ctx: PromptContext = {
       workerConfig: makeCoderConfig(),
       state: createInitialStatus('./PLAN.md', 'coder'),
-      planContent: 'Plan content',
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+      isFirstWorker: true,
     };
 
     const prompt = buildPrompt(ctx);
     expect(prompt).toContain('task_id');
-    expect(prompt).toContain('task_description');
     expect(prompt).toContain('JSON object matching');
   });
 
-  it('includes completed tasks in state context', () => {
-    const state = createInitialStatus('./PLAN.md', 'coder');
-    state.completed_tasks = ['1', '2'];
-
+  it('tells coder to pick 1 uncompleted task when no current task', () => {
     const ctx: PromptContext = {
       workerConfig: makeCoderConfig(),
-      state,
-      planContent: 'Plan',
+      state: createInitialStatus('./PLAN.md', 'coder'),
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+      isFirstWorker: true,
     };
 
     const prompt = buildPrompt(ctx);
-    expect(prompt).toContain('[1]');
-    expect(prompt).toContain('[2]');
-    expect(prompt).toContain('Already completed');
+    expect(prompt).toContain('Pick exactly 1 uncompleted task');
+    expect(prompt).toContain('completed_tasks');
   });
 
-  it('includes review issues when present', () => {
-    const state = createInitialStatus('./PLAN.md', 'coder');
-    state.review_issues = [
-      { description: 'Missing edge case', severity: 'high' },
-    ];
-
-    const ctx: PromptContext = {
-      workerConfig: makeCoderConfig(),
-      state,
-      planContent: 'Plan',
-    };
-
-    const prompt = buildPrompt(ctx);
-    expect(prompt).toContain('Missing edge case');
-    expect(prompt).toContain('HIGH');
-  });
-
-  it('includes current task when present', () => {
+  it('tells coder to fix when current task is fixing', () => {
     const state = createInitialStatus('./PLAN.md', 'coder');
     state.current_task = { id: '5', status: 'fixing' };
 
     const ctx: PromptContext = {
       workerConfig: makeCoderConfig(),
       state,
-      planContent: 'Plan',
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+      isFirstWorker: true,
     };
 
     const prompt = buildPrompt(ctx);
-    expect(prompt).toContain('[5]');
-    expect(prompt).toContain('fixing');
+    expect(prompt).toContain('fixing task 5');
+    expect(prompt).toContain('review issues');
   });
 
-  it('says to pick next task when no current task', () => {
-    const ctx: PromptContext = {
-      workerConfig: makeCoderConfig(),
-      state: createInitialStatus('./PLAN.md', 'coder'),
-      planContent: 'Plan',
-    };
+  it('tells reviewer to get current task from state and details from plan', () => {
+    const state = createInitialStatus('./PLAN.md', 'reviewer');
+    state.current_task = { id: '3', status: 'in_review' };
 
-    const prompt = buildPrompt(ctx);
-    expect(prompt).toContain('Pick the next incomplete task');
-  });
-
-  it('includes git diff when provided', () => {
     const ctx: PromptContext = {
       workerConfig: makeReviewerConfig(),
-      state: createInitialStatus('./PLAN.md', 'reviewer'),
-      planContent: 'Plan',
-      gitDiff: 'diff --git a/file.ts b/file.ts\n+added line',
+      state,
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+      isFirstWorker: false,
     };
 
     const prompt = buildPrompt(ctx);
-    expect(prompt).toContain('Git Diff');
-    expect(prompt).toContain('+added line');
+    expect(prompt).toContain('/repo/.ai/state.json');
+    expect(prompt).toContain('/repo/PLAN.md');
+    expect(prompt).toContain('current task');
+    expect(prompt).toContain('reviewing ONLY the current task');
   });
 
-  it('does not include git diff section when not provided', () => {
+  it('does not embed plan content in prompt', () => {
     const ctx: PromptContext = {
       workerConfig: makeCoderConfig(),
       state: createInitialStatus('./PLAN.md', 'coder'),
-      planContent: 'Plan',
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+      isFirstWorker: true,
     };
 
     const prompt = buildPrompt(ctx);
-    expect(prompt).not.toContain('Git Diff');
+    // Should reference the file path, not contain plan content
+    expect(prompt).not.toContain('## Plan');
   });
 });

@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Command } from 'commander';
 import ora from 'ora';
+import { createLogger } from '../../logger/index.js';
 import { createAnvilContext, createOrchestrator } from '../../core/factory.js';
 import { printSuccess, printError, printInfo, formatOrchestratorResult } from '../output.js';
 import { promptUserForAnswer } from '../user-input.js';
@@ -11,11 +12,14 @@ export function createStartCommand(): Command {
     .description('Start the dev/review orchestration loop')
     .option('-p, --path <path>', 'Repository path', process.cwd())
     .option('--resume', 'Resume from blocked state')
-    .action(async (options: { path: string; resume?: boolean }) => {
+    .option('-v, --verbose', 'Enable debug logging')
+    .action(async (options: { path: string; resume?: boolean; verbose?: boolean }) => {
       const spinner = ora();
 
       try {
-        const context = createAnvilContext(options.path);
+        const logFile = options.verbose ? path.join(options.path, '.ai', 'anvil.log') : undefined;
+        const logger = createLogger({ level: options.verbose ? 'debug' : 'info', logFile });
+        const context = createAnvilContext(options.path, logger);
 
         // Check if initialized
         if (!(await context.aiDir.exists())) {

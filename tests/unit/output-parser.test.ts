@@ -137,4 +137,35 @@ describe('validateReviewerOutput', () => {
     expect(result.issues[0]!.description).toBe('No description');
     expect(result.issues[0]!.severity).toBe('medium');
   });
+
+  it('validates completed_tasks array', () => {
+    const result = validateReviewerOutput({
+      approved: true,
+      done: true,
+      completed_tasks: ['1', '2', '3'],
+      issues: [],
+      confidence: 0.95,
+    });
+
+    expect(result.completed_tasks).toEqual(['1', '2', '3']);
+  });
+
+  it('defaults completed_tasks to empty array when missing', () => {
+    const result = validateReviewerOutput({
+      approved: true,
+      issues: [],
+    });
+
+    expect(result.completed_tasks).toEqual([]);
+  });
+
+  it('filters non-string elements from completed_tasks', () => {
+    const result = validateReviewerOutput({
+      approved: true,
+      completed_tasks: ['1', 42, null, '3', ''],
+      issues: [],
+    });
+
+    expect(result.completed_tasks).toEqual(['1', '3']);
+  });
 });

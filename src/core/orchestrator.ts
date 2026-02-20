@@ -1,4 +1,3 @@
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execa } from 'execa';
 import type { Logger } from '../logger/index.js';
@@ -60,11 +59,14 @@ export class Orchestrator {
     }
 
     logger.info({ turn: status.turn, iteration: status.iteration }, 'Starting orchestration loop');
+    logger.debug({ state: status }, 'Initial state');
 
     const startIteration = status.iteration;
 
     try {
       while (!this.shouldStopFlag) {
+        logger.debug({ state: status }, 'Loop iteration state');
+
         // Check stop conditions
         const stopCheck = stateMachine.shouldStop(status, config);
         if (stopCheck.stop) {
@@ -111,53 +113,21 @@ export class Orchestrator {
           };
         }
 
-        // Read plan file
+        // Build prompt — workers read files themselves
+        const isFirstWorker = workerName === config.workflow[0];
         const planPath = path.resolve(this.repoPath, config.plan_file);
-        let planContent: string;
-        try {
-          planContent = await fs.readFile(planPath, 'utf-8');
-        } catch {
-          status = await this.block(status, `Plan file not found: ${config.plan_file}`);
-          return {
-            success: false,
-            finalStatus: status,
-            totalIterations: status.iteration - startIteration,
-            reason: `Plan file not found: ${config.plan_file}`,
-          };
-        }
+        const statePath = path.join(this.repoPath, '.ai', 'state.json');
 
-        // Get git diff for non-coder workers
-        let gitDiff: string | undefined;
-        if (workerName !== config.workflow[0]) {
-          try {
-            const diffResult = await execa('git', ['diff', '--cached'], {
-              cwd: this.repoPath,
-              reject: false,
-            });
-            if (diffResult.stdout) {
-              gitDiff = diffResult.stdout;
-            } else {
-              // Also try unstaged diff
-              const unstaged = await execa('git', ['diff'], {
-                cwd: this.repoPath,
-                reject: false,
-              });
-              gitDiff = unstaged.stdout || undefined;
-            }
-          } catch {
-            // Git diff is optional
-          }
-        }
-
-        // Build prompt
         const prompt = buildPrompt({
           workerConfig,
           state: status,
-          planContent,
-          gitDiff,
+          planFile: planPath,
+          stateFile: statePath,
+          isFirstWorker,
         });
 
         logger.info({ worker: workerName, iteration: status.iteration }, 'Invoking worker');
+        logger.debug({ prompt: prompt.slice(0, 500) }, 'Worker prompt (truncated)');
 
         // Execute worker
         const result = await worker.execute(prompt, this.repoPath);
@@ -166,6 +136,7 @@ export class Orchestrator {
           { worker: workerName, success: result.success, durationMs: result.durationMs },
           'Worker completed'
         );
+        logger.debug({ rawOutput: result.output }, 'Worker raw output');
 
         // Handle pending question (interactive mode)
         if (result.pendingQuestion) {
@@ -217,8 +188,9 @@ export class Orchestrator {
         }
 
         // Update state based on which worker just ran
-        const isFirstWorker = workerName === config.workflow[0];
         const nextTurn = stateMachine.getNextTurn(workerName, config.workflow);
+
+        logger.debug({ parsed, isFirstWorker, nextTurn }, 'Parsed worker output');
 
         if (isFirstWorker) {
           // Coder just ran
@@ -237,9 +209,11 @@ export class Orchestrator {
             { taskId: coderOutput.task_id, nextTurn },
             'Coder completed, moving to review'
           );
+          logger.debug({ state: status }, 'State after coder');
         } else {
           // Reviewer just ran
           const reviewerOutput = validateReviewerOutput(parsed);
+          logger.debug({ reviewerOutput }, 'Validated reviewer output');
 
           // Check human intervention
           const humanCheck = stateMachine.shouldRequestHumanIntervention(reviewerOutput);
@@ -279,11 +253,16 @@ export class Orchestrator {
               // Commit is best-effort
             }
 
-            // Move task to completed
-            const completedTasks = [...status.completed_tasks];
-            if (status.current_task) {
-              completedTasks.push(status.current_task.id);
+            // Merge completed tasks — reviewer is source of truth
+            // Union of: existing state + reviewer's list + current task
+            const merged = new Set(status.completed_tasks);
+            for (const id of reviewerOutput.completed_tasks) {
+              merged.add(id);
             }
+            if (status.current_task) {
+              merged.add(status.current_task.id);
+            }
+            const completedTasks = [...merged];
 
             // Reviewer signals all plan tasks are done
             if (reviewerOutput.done) {
@@ -295,9 +274,10 @@ export class Orchestrator {
               });
 
               logger.info(
-                { completedCount: completedTasks.length },
+                { completedCount: completedTasks.length, completedTasks },
                 'All plan tasks completed'
               );
+              logger.debug({ state: status }, 'Final state');
 
               return {
                 success: true,
@@ -318,9 +298,10 @@ export class Orchestrator {
             });
 
             logger.info(
-              { completedCount: completedTasks.length },
+              { completedCount: completedTasks.length, completedTasks },
               'Task approved and committed'
             );
+            logger.debug({ state: status }, 'State after approval');
 
             // In manual loop mode, stop after each task completion
             if (config.loop_mode === 'manual') {
@@ -351,6 +332,7 @@ export class Orchestrator {
               { issueCount: reviewerOutput.issues.length, iteration: status.iteration },
               'Reviewer rejected, sending back to coder'
             );
+            logger.debug({ state: status }, 'State after rejection');
           }
         }
       }

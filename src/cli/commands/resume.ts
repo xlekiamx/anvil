@@ -1,5 +1,7 @@
+import * as path from 'node:path';
 import { Command } from 'commander';
 import ora from 'ora';
+import { createLogger } from '../../logger/index.js';
 import { createAnvilContext, createOrchestrator } from '../../core/factory.js';
 import { printError, printInfo, printSuccess, formatOrchestratorResult } from '../output.js';
 import { promptUserForAnswer, displayPendingQuestion } from '../user-input.js';
@@ -9,11 +11,14 @@ export function createResumeCommand(): Command {
   return new Command('resume')
     .description('Resume orchestration from current state')
     .option('-p, --path <path>', 'Repository path', process.cwd())
-    .action(async (options: { path: string }) => {
+    .option('-v, --verbose', 'Enable debug logging')
+    .action(async (options: { path: string; verbose?: boolean }) => {
       const spinner = ora();
 
       try {
-        const context = createAnvilContext(options.path);
+        const logFile = options.verbose ? path.join(options.path, '.ai', 'anvil.log') : undefined;
+        const logger = createLogger({ level: options.verbose ? 'debug' : 'info', logFile });
+        const context = createAnvilContext(options.path, logger);
 
         if (!(await context.aiDir.exists())) {
           printError('.ai directory not found. Run "anvil init" first.');

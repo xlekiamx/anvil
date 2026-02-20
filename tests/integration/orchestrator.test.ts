@@ -29,16 +29,13 @@ async function setupTestRepo(
   await context.aiDir.create();
   await context.configFile.write(config);
 
-  // Write plan file
   await fs.writeFile(path.join(testRepo.path, 'PLAN.md'), planContent, 'utf-8');
 
-  // Initialize git repo for commit testing
   const { execa } = await import('execa');
   await execa('git', ['init'], { cwd: testRepo.path, reject: false });
   await execa('git', ['config', 'user.email', 'test@test.com'], { cwd: testRepo.path, reject: false });
   await execa('git', ['config', 'user.name', 'Test'], { cwd: testRepo.path, reject: false });
 
-  // Initialize state
   await context.statusFile.initialize(config.plan_file, config.workflow[0]!);
 
   return context;
@@ -64,9 +61,7 @@ describe('Orchestrator Integration', () => {
     const coderWorker = new MockWorker('coder', {
       outputFn: () => {
         coderCalls++;
-        if (coderCalls === 1) {
-          return { task_id: '1', status: 'completed' };
-        }
+        if (coderCalls === 1) return { task_id: '1', status: 'completed' };
         return { task_id: '2', status: 'completed' };
       },
     });
@@ -75,11 +70,10 @@ describe('Orchestrator Integration', () => {
     const reviewerWorker = new MockWorker('reviewer', {
       outputFn: () => {
         reviewerCalls++;
-        // First review approves task 1, second approves task 2 and signals done
         if (reviewerCalls === 1) {
-          return { approved: true, done: false, issues: [], confidence: 0.95 };
+          return { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 };
         }
-        return { approved: true, done: true, issues: [], confidence: 0.95 };
+        return { approved: true, done: true, completed_tasks: ['1', '2'], issues: [], confidence: 0.95 };
       },
     });
 
@@ -116,7 +110,7 @@ describe('Orchestrator Integration', () => {
     });
 
     const reviewerWorker = new MockWorker('reviewer', {
-      output: { approved: true, done: false, issues: [], confidence: 0.95 },
+      output: { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 },
     });
 
     const workers = new Map();
@@ -150,20 +144,18 @@ describe('Orchestrator Integration', () => {
       output: { task_id: '1', status: 'completed' },
     });
 
-    // First call rejects, second approves
     let callCount = 0;
     const reviewerWorker = new MockWorker('reviewer', {
       outputFn: () => {
         callCount++;
         if (callCount === 1) {
           return {
-            approved: false,
-            done: false,
+            approved: false, done: false, completed_tasks: [],
             issues: [{ description: 'Missing edge case', severity: 'high' }],
             confidence: 0.7,
           };
         }
-        return { approved: true, done: false, issues: [], confidence: 0.9 };
+        return { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.9 };
       },
     });
 
@@ -182,10 +174,9 @@ describe('Orchestrator Integration', () => {
     const orchestrator = new Orchestrator(testRepo.path, deps);
     const result = await orchestrator.run();
 
-    // Flow: coder -> reviewer rejects -> coder (fix) -> reviewer approves -> done (manual)
     expect(result.success).toBe(true);
     expect(result.finalStatus.completed_tasks).toEqual(['1']);
-    expect(result.finalStatus.iteration).toBe(0); // Reset after approval
+    expect(result.finalStatus.iteration).toBe(0);
   });
 
   it('stops at max iterations per task', async () => {
@@ -197,11 +188,9 @@ describe('Orchestrator Integration', () => {
       output: { task_id: '1', status: 'completed' },
     });
 
-    // Never approves
     const reviewerWorker = new MockWorker('reviewer', {
       output: {
-        approved: false,
-        done: false,
+        approved: false, done: false, completed_tasks: [],
         issues: [{ description: 'Still wrong', severity: 'medium' }],
         confidence: 0.5,
       },
@@ -231,7 +220,7 @@ describe('Orchestrator Integration', () => {
 
     const coderWorker = new MockWorker('coder', { shouldFail: true });
     const reviewerWorker = new MockWorker('reviewer', {
-      output: { approved: true, done: false, issues: [], confidence: 0.9 },
+      output: { approved: true, done: false, completed_tasks: [], issues: [], confidence: 0.9 },
     });
 
     const workers = new Map();
@@ -262,8 +251,7 @@ describe('Orchestrator Integration', () => {
 
     const reviewerWorker = new MockWorker('reviewer', {
       output: {
-        approved: false,
-        done: false,
+        approved: false, done: false, completed_tasks: [],
         issues: [{ description: 'SQL injection vulnerability', severity: 'critical' }],
         confidence: 0.9,
       },
@@ -286,5 +274,90 @@ describe('Orchestrator Integration', () => {
 
     expect(result.success).toBe(false);
     expect(result.finalStatus.human_required).toBe(true);
+  });
+
+  it('handles coder implementing multiple tasks in one go', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const };
+    await context.configFile.write(config);
+
+    // Coder reports task_id: '1' but actually implements tasks 1, 2, and 3
+    const coderWorker = new MockWorker('coder', {
+      output: { task_id: '1', status: 'completed' },
+    });
+
+    // Reviewer detects all three are done
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: {
+        approved: true, done: false,
+        completed_tasks: ['1', '2', '3'],
+        issues: [], confidence: 0.95,
+      },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(result.finalStatus.completed_tasks).toEqual(['1', '2', '3']);
+  });
+
+  it('uses reviewer completed_tasks as source of truth for out-of-order tasks', async () => {
+    const context = await setupTestRepo(testRepo);
+
+    let coderCalls = 0;
+    const coderWorker = new MockWorker('coder', {
+      outputFn: () => {
+        coderCalls++;
+        // Coder picks task 3 first, then task 1
+        if (coderCalls === 1) return { task_id: '3', status: 'completed' };
+        return { task_id: '1', status: 'completed' };
+      },
+    });
+
+    let reviewerCalls = 0;
+    const reviewerWorker = new MockWorker('reviewer', {
+      outputFn: () => {
+        reviewerCalls++;
+        if (reviewerCalls === 1) {
+          return { approved: true, done: false, completed_tasks: ['3'], issues: [], confidence: 0.9 };
+        }
+        return { approved: true, done: true, completed_tasks: ['1', '2', '3'], issues: [], confidence: 0.9 };
+      },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(result.finalStatus.done).toBe(true);
+    // All tasks tracked even though coder only reported 3 and 1
+    expect(result.finalStatus.completed_tasks).toContain('1');
+    expect(result.finalStatus.completed_tasks).toContain('2');
+    expect(result.finalStatus.completed_tasks).toContain('3');
   });
 });

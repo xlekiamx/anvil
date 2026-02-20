@@ -38,11 +38,19 @@ function toJsonSchema(simple: Record<string, unknown>): Record<string, unknown> 
         properties[key] = { type: 'string' };
       }
     } else if (Array.isArray(value)) {
-      // Array of objects
       if (value.length > 0 && typeof value[0] === 'object' && value[0] !== null) {
+        // Array of objects, e.g. [{ description: 'string', severity: 'string' }]
         properties[key] = {
           type: 'array',
           items: toJsonSchema(value[0] as Record<string, unknown>),
+        };
+      } else if (value.length > 0 && typeof value[0] === 'string') {
+        // Array of primitives, e.g. ['string'], ['number']
+        const hint = (value[0] as string).toLowerCase().trim();
+        const itemType = hint === 'boolean' ? 'boolean' : hint.startsWith('number') ? 'number' : 'string';
+        properties[key] = {
+          type: 'array',
+          items: { type: itemType },
         };
       } else {
         properties[key] = { type: 'array' };

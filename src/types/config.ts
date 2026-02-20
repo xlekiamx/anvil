@@ -31,6 +31,7 @@ export const ConfigSchema = z.object({
       output_schema: {
         approved: 'boolean',
         done: 'boolean',
+        completed_tasks: ['string'],
         issues: [{ description: 'string', severity: 'critical | high | medium | low' }],
         confidence: 'number 0-1',
       },
