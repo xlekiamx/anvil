@@ -1,10 +1,10 @@
 // Types
 export type { Status, CurrentTask, ReviewIssue, PendingQuestion, QuestionOption } from './types/status.js';
-export type { Config, WorkerConfig, Provider, LoopMode } from './types/config.js';
+export type { Config, WorkerConfig, Provider, LoopMode, Behavior } from './types/config.js';
 
 // Schemas
 export { StatusSchema, CurrentTaskSchema, ReviewIssueSchema, PendingQuestionSchema, createInitialStatus } from './types/status.js';
-export { ConfigSchema, WorkerConfigSchema, ProviderSchema, LoopModeSchema, getDefaultConfig } from './types/config.js';
+export { ConfigSchema, WorkerConfigSchema, ProviderSchema, LoopModeSchema, BehaviorSchema, getDefaultConfig } from './types/config.js';
 
 // Core
 export { StateMachine } from './core/state-machine.js';
@@ -14,13 +14,12 @@ export { createAnvilContext, createOrchestrator } from './core/factory.js';
 export type { AnvilContext } from './core/factory.js';
 export { buildPrompt } from './core/prompt-builder.js';
 export type { PromptContext } from './core/prompt-builder.js';
-export { parseOutput, validateCoderOutput, validateReviewerOutput } from './core/output-parser.js';
-export type { CoderOutput, ReviewerOutput, ReviewerIssue as ReviewerOutputIssue } from './core/output-parser.js';
+export { parseOutput, validateOutput } from './core/output-parser.js';
 
 // Files
 export { AiDirectory, AI_DIR_NAME } from './files/ai-directory.js';
 export { StatusFile, STATUS_FILE_NAME } from './files/status.js';
-export { ConfigFile, CONFIG_FILE_NAME } from './files/config.js';
+export { ConfigFile, getConfigFileName } from './files/config.js';
 
 // Agents
 export type { Worker, WorkerResult, DetectedQuestion, QuestionHandler } from './agents/types.js';

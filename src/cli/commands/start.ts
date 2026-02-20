@@ -13,13 +13,14 @@ export function createStartCommand(): Command {
     .option('-p, --path <path>', 'Repository path', process.cwd())
     .option('--resume', 'Resume from blocked state')
     .option('-v, --verbose', 'Enable debug logging')
-    .action(async (options: { path: string; resume?: boolean; verbose?: boolean }) => {
+    .option('-c, --config <name>', 'Config name (loads .ai/config.<name>.json)')
+    .action(async (options: { path: string; resume?: boolean; verbose?: boolean; config?: string }) => {
       const spinner = ora();
 
       try {
         const logFile = options.verbose ? path.join(options.path, '.ai', 'anvil.log') : undefined;
         const logger = createLogger({ level: options.verbose ? 'debug' : 'info', logFile });
-        const context = createAnvilContext(options.path, logger);
+        const context = createAnvilContext(options.path, logger, options.config);
 
         // Check if initialized
         if (!(await context.aiDir.exists())) {

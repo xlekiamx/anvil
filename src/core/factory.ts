@@ -17,7 +17,7 @@ export interface AnvilContext {
   logger: Logger;
 }
 
-export function createAnvilContext(repoPath: string, logger?: Logger): AnvilContext {
+export function createAnvilContext(repoPath: string, logger?: Logger, configName?: string): AnvilContext {
   const log = logger ?? createLogger();
   const aiDir = new AiDirectory(repoPath, log);
 
@@ -25,7 +25,7 @@ export function createAnvilContext(repoPath: string, logger?: Logger): AnvilCont
     repoPath,
     aiDir,
     statusFile: new StatusFile(aiDir.path, log),
-    configFile: new ConfigFile(aiDir.path, log),
+    configFile: new ConfigFile(aiDir.path, log, configName),
     logger: log,
   };
 }

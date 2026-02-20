@@ -7,7 +7,16 @@ import type { StatusFile } from '../files/status.js';
 import type { ConfigFile } from '../files/config.js';
 import { StateMachine } from './state-machine.js';
 import { buildPrompt } from './prompt-builder.js';
-import { parseOutput, validateCoderOutput, validateReviewerOutput } from './output-parser.js';
+import { parseOutput, validateOutput } from './output-parser.js';
+import type { Config } from '../types/config.js';
+
+/** Find the first executor-behavior worker in the workflow. */
+function findFirstExecutor(config: Config): string {
+  return config.workflow.find(w => {
+    const wc = config.workers[w];
+    return wc && (wc.behavior ?? 'executor') === 'executor';
+  }) ?? config.workflow[0]!;
+}
 
 export interface OrchestratorDependencies {
   logger: Logger;
@@ -114,16 +123,13 @@ export class Orchestrator {
         }
 
         // Build prompt — workers read files themselves
-        const isFirstWorker = workerName === config.workflow[0];
         const planPath = path.resolve(this.repoPath, config.plan_file);
         const statePath = path.join(this.repoPath, '.ai', 'state.json');
 
         const prompt = buildPrompt({
           workerConfig,
-          state: status,
           planFile: planPath,
           stateFile: statePath,
-          isFirstWorker,
         });
 
         logger.info({ worker: workerName, iteration: status.iteration }, 'Invoking worker');
@@ -187,49 +193,60 @@ export class Orchestrator {
           };
         }
 
-        // Update state based on which worker just ran
+        // Validate output against worker's output_schema
+        const validated = validateOutput(parsed, workerConfig.output_schema);
+
+        // Update state based on worker behavior
+        const behavior = workerConfig.behavior ?? 'executor';
         const nextTurn = stateMachine.getNextTurn(workerName, config.workflow);
 
-        logger.debug({ parsed, isFirstWorker, nextTurn }, 'Parsed worker output');
+        logger.debug({ validated, behavior, nextTurn }, 'Parsed worker output');
 
-        if (isFirstWorker) {
-          // Coder just ran
-          const coderOutput = validateCoderOutput(parsed);
+        if (behavior === 'executor') {
+          // Executor: read task_id, set current_task, advance turn, clear feedback
+          const taskId = typeof validated.task_id === 'string' ? validated.task_id : '';
 
           status = await this.deps.statusFile.update({
             current_task: {
-              id: coderOutput.task_id,
+              id: taskId,
               status: 'in_review',
             },
             turn: nextTurn,
-            review_issues: [],
+            feedback: [],
           });
 
           logger.info(
-            { taskId: coderOutput.task_id, nextTurn },
-            'Coder completed, moving to review'
+            { taskId, nextTurn },
+            'Executor completed, advancing turn'
           );
-          logger.debug({ state: status }, 'State after coder');
-        } else {
-          // Reviewer just ran
-          const reviewerOutput = validateReviewerOutput(parsed);
-          logger.debug({ reviewerOutput }, 'Validated reviewer output');
+          logger.debug({ state: status }, 'State after executor');
+        } else if (behavior === 'reviewer') {
+          // Reviewer: read approved, completed_tasks, done, issues from output
+          const approved = typeof validated.approved === 'boolean' ? validated.approved : false;
+          const done = typeof validated.done === 'boolean' ? validated.done : false;
+          const issues = Array.isArray(validated.issues) ? validated.issues as Array<Record<string, unknown>> : [];
+          const completedTasksRaw = Array.isArray(validated.completed_tasks)
+            ? (validated.completed_tasks as unknown[]).filter((t): t is string => typeof t === 'string' && t.length > 0)
+            : [];
+          const confidence = typeof validated.confidence === 'number' ? validated.confidence : 0.7;
+
+          logger.debug({ approved, done, issues, completedTasksRaw, confidence }, 'Validated reviewer output');
 
           // Check human intervention
-          const humanCheck = stateMachine.shouldRequestHumanIntervention(reviewerOutput);
+          const humanCheck = stateMachine.shouldRequestHumanIntervention(validated);
           if (humanCheck.required) {
             logger.warn({ reason: humanCheck.reason }, 'Human intervention required');
-            const firstWorker = config.workflow[0]!;
+            const firstExecutor = findFirstExecutor(config);
             status = await this.deps.statusFile.update({
               human_required: true,
-              turn: firstWorker,
+              turn: firstExecutor,
               current_task: status.current_task ? {
                 ...status.current_task,
                 status: 'fixing',
               } : null,
-              review_issues: reviewerOutput.issues.map((i) => ({
-                description: i.description,
-                severity: i.severity as 'critical' | 'high' | 'medium' | 'low',
+              feedback: issues.map((i) => ({
+                description: typeof i.description === 'string' ? i.description : 'No description',
+                severity: (typeof i.severity === 'string' ? i.severity : 'medium') as 'critical' | 'high' | 'medium' | 'low',
               })),
             });
             return {
@@ -240,7 +257,7 @@ export class Orchestrator {
             };
           }
 
-          if (reviewerOutput.approved) {
+          if (approved) {
             // Commit changes
             try {
               await execa('git', ['add', '-A'], { cwd: this.repoPath, reject: false });
@@ -254,9 +271,8 @@ export class Orchestrator {
             }
 
             // Merge completed tasks — reviewer is source of truth
-            // Union of: existing state + reviewer's list + current task
             const merged = new Set(status.completed_tasks);
-            for (const id of reviewerOutput.completed_tasks) {
+            for (const id of completedTasksRaw) {
               merged.add(id);
             }
             if (status.current_task) {
@@ -264,12 +280,11 @@ export class Orchestrator {
             }
             const completedTasks = [...merged];
 
-            // Reviewer signals all plan tasks are done
-            if (reviewerOutput.done) {
+            if (done) {
               status = await this.deps.statusFile.update({
                 current_task: null,
                 completed_tasks: completedTasks,
-                review_issues: [],
+                feedback: [],
                 done: true,
               });
 
@@ -287,13 +302,12 @@ export class Orchestrator {
               };
             }
 
-            // Reset for next task
-            const firstWorker = config.workflow[0]!;
+            const firstExecutor = findFirstExecutor(config);
             status = await this.deps.statusFile.update({
               current_task: null,
               completed_tasks: completedTasks,
-              review_issues: [],
-              turn: firstWorker,
+              feedback: [],
+              turn: firstExecutor,
               iteration: 0,
             });
 
@@ -303,7 +317,6 @@ export class Orchestrator {
             );
             logger.debug({ state: status }, 'State after approval');
 
-            // In manual loop mode, stop after each task completion
             if (config.loop_mode === 'manual') {
               return {
                 success: true,
@@ -313,14 +326,14 @@ export class Orchestrator {
               };
             }
           } else {
-            // Reviewer rejected - send back to coder with issues
-            const firstWorker = config.workflow[0]!;
+            // Reviewer rejected — send back to first executor with feedback
+            const firstExecutor = findFirstExecutor(config);
             status = await this.deps.statusFile.update({
-              review_issues: reviewerOutput.issues.map((i) => ({
-                description: i.description,
-                severity: i.severity as 'critical' | 'high' | 'medium' | 'low',
+              feedback: issues.map((i) => ({
+                description: typeof i.description === 'string' ? i.description : 'No description',
+                severity: (typeof i.severity === 'string' ? i.severity : 'medium') as 'critical' | 'high' | 'medium' | 'low',
               })),
-              turn: firstWorker,
+              turn: firstExecutor,
               iteration: status.iteration + 1,
               current_task: status.current_task ? {
                 ...status.current_task,
@@ -329,8 +342,8 @@ export class Orchestrator {
             });
 
             logger.info(
-              { issueCount: reviewerOutput.issues.length, iteration: status.iteration },
-              'Reviewer rejected, sending back to coder'
+              { issueCount: issues.length, iteration: status.iteration },
+              'Reviewer rejected, sending back to executor'
             );
             logger.debug({ state: status }, 'State after rejection');
           }

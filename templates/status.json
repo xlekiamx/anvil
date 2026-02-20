@@ -2,7 +2,7 @@
   "plan_file": "./PLAN.md",
   "turn": "coder",
   "current_task": null,
-  "review_issues": [],
+  "feedback": [],
   "completed_tasks": [],
   "iteration": 0,
   "done": false,

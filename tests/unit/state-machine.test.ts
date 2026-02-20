@@ -150,5 +150,21 @@ describe('StateMachine', () => {
       });
       expect(result.required).toBe(false);
     });
+
+    it('returns required=false when output has no issues or confidence fields', () => {
+      const result = sm.shouldRequestHumanIntervention({
+        task_id: '1',
+        status: 'completed',
+      });
+      expect(result.required).toBe(false);
+    });
+
+    it('works with any output shape', () => {
+      const result = sm.shouldRequestHumanIntervention({
+        custom_field: 'value',
+        issues: [{ description: 'Critical bug', severity: 'critical' }],
+      });
+      expect(result.required).toBe(true);
+    });
   });
 });

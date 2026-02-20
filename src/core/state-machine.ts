@@ -1,6 +1,5 @@
 import type { Status } from '../types/status.js';
 import type { Config } from '../types/config.js';
-import type { ReviewerOutput } from './output-parser.js';
 
 export class StateMachine {
   /**
@@ -58,27 +57,30 @@ export class StateMachine {
   }
 
   /**
-   * Check if reviewer output warrants human intervention.
+   * Check if output warrants human intervention.
+   * Looks for critical severity in any `issues` array and low `confidence`.
    */
   shouldRequestHumanIntervention(
-    reviewerOutput: ReviewerOutput
+    output: Record<string, unknown>
   ): { required: boolean; reason?: string } {
-    // Critical issues require human
-    const critical = reviewerOutput.issues.find(
-      (i) => i.severity === 'critical'
-    );
-    if (critical) {
-      return {
-        required: true,
-        reason: `Critical issue found: ${critical.description}`,
-      };
+    // Check for critical issues if issues array exists
+    if (Array.isArray(output.issues)) {
+      const critical = (output.issues as Array<Record<string, unknown>>).find(
+        (i) => i.severity === 'critical'
+      );
+      if (critical) {
+        return {
+          required: true,
+          reason: `Critical issue found: ${typeof critical.description === 'string' ? critical.description : 'Unknown'}`,
+        };
+      }
     }
 
     // Very low confidence
-    if (reviewerOutput.confidence < 0.3) {
+    if (typeof output.confidence === 'number' && output.confidence < 0.3) {
       return {
         required: true,
-        reason: `Very low confidence: ${reviewerOutput.confidence.toFixed(2)}`,
+        reason: `Very low confidence: ${output.confidence.toFixed(2)}`,
       };
     }
 

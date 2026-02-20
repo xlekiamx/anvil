@@ -6,12 +6,17 @@ export type Provider = z.infer<typeof ProviderSchema>;
 export const LoopModeSchema = z.enum(['auto', 'manual']);
 export type LoopMode = z.infer<typeof LoopModeSchema>;
 
+export const BehaviorSchema = z.enum(['executor', 'reviewer']);
+export type Behavior = z.infer<typeof BehaviorSchema>;
+
 export const WorkerConfigSchema = z.object({
   provider: ProviderSchema,
   role: z.string().min(1),
   model: z.string().optional(),
   interactive: z.boolean().default(false),
   output_schema: z.record(z.unknown()).default({}),
+  behavior: BehaviorSchema.default('executor'),
+  prompt_file: z.string().optional(),
 });
 export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
 
@@ -20,6 +25,8 @@ export const ConfigSchema = z.object({
     coder: {
       provider: 'mock',
       role: 'You are a senior developer. Implement tasks from the plan.',
+      behavior: 'executor',
+      prompt_file: './prompts/coder.md',
       output_schema: {
         task_id: 'string',
         status: 'completed | needs_review',
@@ -28,6 +35,8 @@ export const ConfigSchema = z.object({
     reviewer: {
       provider: 'mock',
       role: 'You are a code reviewer. Review changes for correctness, security, and quality.',
+      behavior: 'reviewer',
+      prompt_file: './prompts/code-reviewer.md',
       output_schema: {
         approved: 'boolean',
         done: 'boolean',

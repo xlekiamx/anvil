@@ -1,21 +1,3 @@
-export interface CoderOutput {
-  task_id: string;
-  status: string;
-}
-
-export interface ReviewerIssue {
-  description: string;
-  severity: string;
-}
-
-export interface ReviewerOutput {
-  approved: boolean;
-  done: boolean;
-  completed_tasks: string[];
-  issues: ReviewerIssue[];
-  confidence: number;
-}
-
 export function parseOutput(stdout: string): Record<string, unknown> {
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -52,50 +34,28 @@ export function parseOutput(stdout: string): Record<string, unknown> {
   throw new Error(`Invalid JSON output from worker: ${trimmed.slice(0, 200)}`);
 }
 
-export function validateCoderOutput(parsed: Record<string, unknown>): CoderOutput {
-  if (typeof parsed.task_id !== 'string' || !parsed.task_id) {
-    throw new Error('Coder output missing required field: task_id');
-  }
-  if (typeof parsed.status !== 'string' || !parsed.status) {
-    throw new Error('Coder output missing required field: status');
-  }
+export function validateOutput(
+  parsed: Record<string, unknown>,
+  outputSchema: Record<string, unknown>
+): Record<string, unknown> {
+  const result = { ...parsed };
 
-  return {
-    task_id: parsed.task_id,
-    status: parsed.status,
-  };
-}
-
-export function validateReviewerOutput(parsed: Record<string, unknown>): ReviewerOutput {
-  if (typeof parsed.approved !== 'boolean') {
-    throw new Error('Reviewer output missing required field: approved');
-  }
-  if (!Array.isArray(parsed.issues)) {
-    throw new Error('Reviewer output missing required field: issues');
-  }
-
-  const issues: ReviewerIssue[] = parsed.issues.map((issue: unknown, index: number) => {
-    if (typeof issue !== 'object' || issue === null) {
-      throw new Error(`Reviewer output issue[${index}] is not an object`);
+  for (const [key, schemaValue] of Object.entries(outputSchema)) {
+    if (key in result) {
+      continue;
     }
-    const obj = issue as Record<string, unknown>;
-    return {
-      description: typeof obj.description === 'string' ? obj.description : 'No description',
-      severity: typeof obj.severity === 'string' ? obj.severity : 'medium',
-    };
-  });
 
-  let completed_tasks: string[] = [];
-  if (Array.isArray(parsed.completed_tasks)) {
-    completed_tasks = parsed.completed_tasks
-      .filter((t: unknown): t is string => typeof t === 'string' && t.length > 0);
+    // Provide defaults for missing fields based on schema type
+    if (Array.isArray(schemaValue)) {
+      result[key] = [];
+    } else if (schemaValue === 'boolean') {
+      result[key] = false;
+    } else if (typeof schemaValue === 'string' && schemaValue.startsWith('number')) {
+      throw new Error(`Output missing required field: ${key}`);
+    } else if (typeof schemaValue === 'string') {
+      throw new Error(`Output missing required field: ${key}`);
+    }
   }
 
-  return {
-    approved: parsed.approved,
-    done: typeof parsed.done === 'boolean' ? parsed.done : false,
-    completed_tasks,
-    issues,
-    confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.7,
-  };
+  return result;
 }

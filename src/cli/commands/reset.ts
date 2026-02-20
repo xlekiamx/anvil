@@ -6,9 +6,10 @@ export function createResetCommand(): Command {
   return new Command('reset')
     .description('Reset state to initial (keeps config and plan)')
     .option('-p, --path <path>', 'Repository path', process.cwd())
-    .action(async (options: { path: string }) => {
+    .option('-c, --config <name>', 'Config name (loads .ai/config.<name>.json)')
+    .action(async (options: { path: string; config?: string }) => {
       try {
-        const context = createAnvilContext(options.path);
+        const context = createAnvilContext(options.path, undefined, options.config);
 
         if (!(await context.aiDir.exists())) {
           printError('.ai directory not found. Run "anvil init" first.');

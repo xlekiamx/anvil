@@ -1,6 +1,20 @@
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { Command } from 'commander';
 import { createAnvilContext } from '../../core/factory.js';
 import { printSuccess, printError, printInfo } from '../output.js';
+
+const CODER_PROMPT = `You are a senior software engineer. Implement tasks from the plan.
+Read the plan file for the task list. Read the state file for completed tasks and feedback.
+If the current task in state has status 'fixing', address the feedback issues.
+Otherwise, pick exactly 1 uncompleted task from the plan (not in completed_tasks) and implement it.
+Implement only that one task. Write tests for your implementation.`;
+
+const CODE_REVIEWER_PROMPT = `You are a staff software engineer reviewing changes for correctness, security, and quality.
+Read the state file to get the current task. Read the plan file for task details.
+Review ONLY the current task. Do not flag other unimplemented tasks as issues.
+For completed_tasks, list all task IDs fully implemented in the codebase.
+Set done=true only when ALL plan tasks are in completed_tasks.`;
 
 export function createInitCommand(): Command {
   return new Command('init')
@@ -35,6 +49,8 @@ export function createInitCommand(): Command {
             coder: {
               provider: 'claude',
               role: 'You are a senior developer. Implement tasks from the plan.',
+              behavior: 'executor',
+              prompt_file: './prompts/coder.md',
               interactive: true,
               output_schema: {
                 task_id: 'string',
@@ -45,8 +61,12 @@ export function createInitCommand(): Command {
             reviewer: {
               provider: 'codex',
               role: 'You are a code reviewer. Review changes for correctness, security, and quality.',
+              behavior: 'reviewer',
+              prompt_file: './prompts/code-reviewer.md',
               output_schema: {
                 approved: 'boolean',
+                done: 'boolean',
+                completed_tasks: ['string'],
                 issues: [{ description: 'string', severity: 'critical | high | medium | low' }],
                 confidence: 'number 0-1',
               },
@@ -59,6 +79,13 @@ export function createInitCommand(): Command {
         });
         await context.configFile.write(config);
         printSuccess('Created config.json');
+
+        // Create prompt files
+        const promptsDir = path.join(options.path, 'prompts');
+        await fs.mkdir(promptsDir, { recursive: true });
+        await fs.writeFile(path.join(promptsDir, 'coder.md'), CODER_PROMPT, 'utf-8');
+        await fs.writeFile(path.join(promptsDir, 'code-reviewer.md'), CODE_REVIEWER_PROMPT, 'utf-8');
+        printSuccess('Created prompts/ directory with default prompt files');
 
         console.log('');
         printInfo('Next steps:');

@@ -7,9 +7,10 @@ export function createStatusCommand(): Command {
     .description('Show current orchestration status')
     .option('-p, --path <path>', 'Repository path', process.cwd())
     .option('--json', 'Output as JSON')
-    .action(async (options: { path: string; json?: boolean }) => {
+    .option('-c, --config <name>', 'Config name (loads .ai/config.<name>.json)')
+    .action(async (options: { path: string; json?: boolean; config?: string }) => {
       try {
-        const context = createAnvilContext(options.path);
+        const context = createAnvilContext(options.path, undefined, options.config);
 
         // Check if initialized
         if (!(await context.aiDir.exists())) {

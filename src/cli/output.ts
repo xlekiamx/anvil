@@ -33,10 +33,10 @@ export function formatStatus(status: Status): string {
     lines.push(chalk.red.bold('Blocked:') + ` ${status.blocked_reason}`);
   }
 
-  if (status.review_issues.length > 0) {
+  if (status.feedback.length > 0) {
     lines.push('');
-    lines.push(chalk.bold(`Review Issues (${status.review_issues.length}):`));
-    for (const issue of status.review_issues) {
+    lines.push(chalk.bold(`Feedback (${status.feedback.length}):`));
+    for (const issue of status.feedback) {
       const severity = formatSeverity(issue.severity);
       lines.push(`  ${severity} ${issue.description}`);
     }

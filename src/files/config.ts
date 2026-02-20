@@ -4,16 +4,19 @@ import { ConfigSchema, type Config, getDefaultConfig } from '../types/config.js'
 import { ValidationError } from '../utils/errors.js';
 import type { Logger } from '../logger/index.js';
 
-export const CONFIG_FILE_NAME = 'config.json';
+export function getConfigFileName(configName?: string): string {
+  return configName ? `config.${configName}.json` : 'config.json';
+}
 
 export class ConfigFile {
   public readonly path: string;
 
   constructor(
     aiDir: string,
-    private readonly logger: Logger
+    private readonly logger: Logger,
+    configName?: string
   ) {
-    this.path = path.join(aiDir, CONFIG_FILE_NAME);
+    this.path = path.join(aiDir, getConfigFileName(configName));
   }
 
   async exists(): Promise<boolean> {
