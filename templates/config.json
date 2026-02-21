@@ -3,6 +3,8 @@
     "coder": {
       "provider": "claude",
       "role": "You are a senior developer. Implement tasks from the plan.",
+      "behavior": "executor",
+      "prompt_file": "./prompts/coder.md",
       "interactive": true,
       "output_schema": {
         "task_id": "string",
@@ -13,8 +15,12 @@
     "reviewer": {
       "provider": "codex",
       "role": "You are a code reviewer. Review changes for correctness, security, and quality.",
+      "behavior": "reviewer",
+      "prompt_file": "./prompts/code-reviewer.md",
       "output_schema": {
         "approved": "boolean",
+        "done": "boolean",
+        "completed_tasks": ["string"],
         "issues": [{ "description": "string", "severity": "critical | high | medium | low" }],
         "confidence": "number 0-1"
       }

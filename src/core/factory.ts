@@ -3,6 +3,7 @@ import { createLogger } from '../logger/index.js';
 import { AiDirectory } from '../files/ai-directory.js';
 import { StatusFile } from '../files/status.js';
 import { ConfigFile } from '../files/config.js';
+import { GlobalConfigManager } from '../files/global-config.js';
 import { Orchestrator, type OrchestratorDependencies } from './orchestrator.js';
 import { StateMachine } from './state-machine.js';
 import { createWorkers } from '../agents/factory.js';
@@ -20,12 +21,13 @@ export interface AnvilContext {
 export function createAnvilContext(repoPath: string, logger?: Logger, configName?: string): AnvilContext {
   const log = logger ?? createLogger();
   const aiDir = new AiDirectory(repoPath, log);
+  const globalConfigManager = new GlobalConfigManager();
 
   return {
     repoPath,
     aiDir,
     statusFile: new StatusFile(aiDir.path, log),
-    configFile: new ConfigFile(aiDir.path, log, configName),
+    configFile: new ConfigFile(aiDir.path, log, configName, globalConfigManager),
     logger: log,
   };
 }

@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import {
   WorkerConfigSchema,
   ConfigSchema,
@@ -8,6 +11,10 @@ import {
   StatusSchema,
   createInitialStatus,
 } from '../../src/types/status.js';
+import { ConfigFile } from '../../src/files/config.js';
+import { GlobalConfigManager } from '../../src/files/global-config.js';
+import { createLogger } from '../../src/logger/index.js';
+import { getBuiltinConfig } from '../../src/files/builtin-configs.js';
 
 describe('WorkerConfigSchema behavior field', () => {
   it('accepts executor behavior', () => {
@@ -147,5 +154,85 @@ describe('StatusSchema feedback field', () => {
   it('createInitialStatus returns empty feedback array', () => {
     const status = createInitialStatus('./PLAN.md', 'coder');
     expect(status.feedback).toEqual([]);
+  });
+});
+
+describe('ConfigFile resolution fallback', () => {
+  let tmpDir: string;
+  let aiDir: string;
+  let globalDir: string;
+  let logger: ReturnType<typeof createLogger>;
+  let globalManager: GlobalConfigManager;
+
+  const localConfig = ConfigSchema.parse({
+    workers: {
+      local: { provider: 'mock', role: 'local worker', behavior: 'executor' },
+    },
+    workflow: ['local'],
+  });
+
+  const globalConfig = ConfigSchema.parse({
+    workers: {
+      global: { provider: 'mock', role: 'global worker', behavior: 'executor' },
+    },
+    workflow: ['global'],
+  });
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anvil-config-'));
+    aiDir = path.join(tmpDir, '.ai');
+    globalDir = path.join(tmpDir, 'global-anvil');
+    await fs.mkdir(aiDir, { recursive: true });
+    logger = createLogger({ level: 'silent' });
+    globalManager = new GlobalConfigManager(globalDir);
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('local config takes precedence over global', async () => {
+    // Write both local and global
+    const cf = new ConfigFile(aiDir, logger, 'planning', globalManager);
+    await fs.writeFile(
+      path.join(aiDir, 'config.planning.json'),
+      JSON.stringify(localConfig),
+      'utf-8'
+    );
+    await globalManager.write('planning', globalConfig);
+
+    const config = await cf.read();
+    expect(config.workers.local).toBeDefined();
+    expect(config.workers.global).toBeUndefined();
+  });
+
+  it('falls back to global when local missing', async () => {
+    await globalManager.write('planning', globalConfig);
+    const cf = new ConfigFile(aiDir, logger, 'planning', globalManager);
+
+    const config = await cf.read();
+    expect(config.workers.global).toBeDefined();
+  });
+
+  it('falls back to builtin when both local and global missing', async () => {
+    const cf = new ConfigFile(aiDir, logger, 'planning', globalManager);
+    const config = await cf.read();
+    const builtin = getBuiltinConfig('planning')!;
+    expect(config.workers.planner).toBeDefined();
+    expect(config.workflow).toEqual(builtin.workflow);
+  });
+
+  it('falls back to default when no configName and file missing', async () => {
+    const cf = new ConfigFile(aiDir, logger, undefined, globalManager);
+    const config = await cf.read();
+    const defaultConfig = getDefaultConfig();
+    expect(config).toEqual(defaultConfig);
+  });
+
+  it('works without GlobalConfigManager (backwards compat)', async () => {
+    const cf = new ConfigFile(aiDir, logger, 'planning');
+    // No global manager, no local file — should fall back to builtin
+    const config = await cf.read();
+    expect(config.workers.planner).toBeDefined();
   });
 });

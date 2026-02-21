@@ -3,6 +3,8 @@ import * as path from 'node:path';
 import { ConfigSchema, type Config, getDefaultConfig } from '../types/config.js';
 import { ValidationError } from '../utils/errors.js';
 import type { Logger } from '../logger/index.js';
+import type { GlobalConfigManager } from './global-config.js';
+import { getBuiltinConfig } from './builtin-configs.js';
 
 export function getConfigFileName(configName?: string): string {
   return configName ? `config.${configName}.json` : 'config.json';
@@ -14,7 +16,8 @@ export class ConfigFile {
   constructor(
     aiDir: string,
     private readonly logger: Logger,
-    configName?: string
+    private readonly configName?: string,
+    private readonly globalConfigManager?: GlobalConfigManager
   ) {
     this.path = path.join(aiDir, getConfigFileName(configName));
   }
@@ -29,17 +32,41 @@ export class ConfigFile {
   }
 
   async read(): Promise<Config> {
+    // 1. Try local file
     try {
       const content = await fs.readFile(this.path, 'utf-8');
       const data = JSON.parse(content) as unknown;
       return this.validate(data);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        this.logger.debug('Config file not found, using defaults');
-        return getDefaultConfig();
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
       }
-      throw error;
     }
+
+    // 2. Try global config (if configName set)
+    if (this.configName && this.globalConfigManager) {
+      try {
+        if (await this.globalConfigManager.exists(this.configName)) {
+          this.logger.debug(`Using global config: ${this.configName}`);
+          return await this.globalConfigManager.read(this.configName);
+        }
+      } catch {
+        // Fall through
+      }
+    }
+
+    // 3. Try builtin config (if configName set)
+    if (this.configName) {
+      const builtin = getBuiltinConfig(this.configName);
+      if (builtin) {
+        this.logger.debug(`Using builtin config: ${this.configName}`);
+        return builtin;
+      }
+    }
+
+    // 4. Default
+    this.logger.debug('Config file not found, using defaults');
+    return getDefaultConfig();
   }
 
   async write(config: Config): Promise<void> {

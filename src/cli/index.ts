@@ -5,6 +5,7 @@ import { createStatusCommand } from './commands/status.js';
 import { createStopCommand } from './commands/stop.js';
 import { createResumeCommand } from './commands/resume.js';
 import { createResetCommand } from './commands/reset.js';
+import { createConfigCommand } from './commands/config.js';
 
 export function createCli(): Command {
   const program = new Command();
@@ -20,6 +21,7 @@ export function createCli(): Command {
   program.addCommand(createStopCommand());
   program.addCommand(createResumeCommand());
   program.addCommand(createResetCommand());
+  program.addCommand(createConfigCommand());
 
   return program;
 }

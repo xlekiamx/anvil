@@ -14,8 +14,13 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "files": [
+    "dist",
+    "templates"
+  ],
   "scripts": {
     "build": "tsup",
+    "prepare": "tsup",
     "dev": "tsup --watch",
     "start": "node dist/bin/anvil.js",
     "test": "vitest",

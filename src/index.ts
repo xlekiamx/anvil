@@ -20,6 +20,9 @@ export { parseOutput, validateOutput } from './core/output-parser.js';
 export { AiDirectory, AI_DIR_NAME } from './files/ai-directory.js';
 export { StatusFile, STATUS_FILE_NAME } from './files/status.js';
 export { ConfigFile, getConfigFileName } from './files/config.js';
+export { GlobalConfigManager } from './files/global-config.js';
+export { getBuiltinConfig, listBuiltinConfigs } from './files/builtin-configs.js';
+export { getBuiltinPrompt, listBuiltinPrompts } from './files/prompt-templates.js';
 
 // Agents
 export type { Worker, WorkerResult, DetectedQuestion, QuestionHandler } from './agents/types.js';
