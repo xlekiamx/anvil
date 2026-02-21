@@ -30,3 +30,6 @@ coverage/
 *.tmp
 *.temp
 .cache/
+
+# Plan
+PLAN.md
