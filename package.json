@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "tsup",
-    "prepare": "tsup",
+    "release": "npm run build && npm pack",
     "dev": "tsup --watch",
     "start": "node dist/bin/anvil.js",
     "test": "vitest",
@@ -35,12 +35,12 @@
     "ora": "^8.1.1",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
-    "tsup": "^8.3.5",
-    "typescript": "^5.7.3",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.3",
     "vitest": "^2.1.8"
   },
   "engines": {
