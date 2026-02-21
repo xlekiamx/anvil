@@ -93,7 +93,7 @@ export class ConfigFile {
       const issues = result.error.issues.map(
         (i) => `${i.path.join('.')}: ${i.message}`
       );
-      throw new ValidationError('Invalid config file', issues);
+      throw new ValidationError(`Invalid config file: ${issues.join(', ')}`, issues);
     }
     return result.data;
   }

@@ -78,7 +78,7 @@ export class StatusFile {
       const issues = result.error.issues.map(
         (i) => `${i.path.join('.')}: ${i.message}`
       );
-      throw new ValidationError('Invalid state file', issues);
+      throw new ValidationError(`Invalid state file: ${issues.join(', ')}`, issues);
     }
     return result.data;
   }
