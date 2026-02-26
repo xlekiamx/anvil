@@ -6,6 +6,9 @@ export type Provider = z.infer<typeof ProviderSchema>;
 export const LoopModeSchema = z.enum(['auto', 'manual']);
 export type LoopMode = z.infer<typeof LoopModeSchema>;
 
+export const ReviewStrategySchema = z.enum(['per_task', 'batch']);
+export type ReviewStrategy = z.infer<typeof ReviewStrategySchema>;
+
 export const BehaviorSchema = z.enum(['executor', 'reviewer']);
 export type Behavior = z.infer<typeof BehaviorSchema>;
 
@@ -50,6 +53,8 @@ export const ConfigSchema = z.object({
   workflow: z.array(z.string()).min(1).default(['coder', 'reviewer']),
   loop_mode: LoopModeSchema.default('auto'),
   max_iterations_per_task: z.number().int().min(1).max(50).default(6),
+  review_strategy: ReviewStrategySchema.default('per_task'),
+  parse_error_retries: z.number().int().min(0).default(3),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

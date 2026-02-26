@@ -314,6 +314,354 @@ describe('Orchestrator Integration', () => {
     expect(result.finalStatus.completed_tasks).toEqual(['1', '2', '3']);
   });
 
+  it('appends executor notes to state', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const };
+    await context.configFile.write(config);
+
+    const coderWorker = new MockWorker('coder', {
+      outputFn: () => ({ task_id: '1', status: 'completed', notes: ['Used pattern X for testability'] }),
+    });
+
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(result.finalStatus.notes).toContain('Used pattern X for testability');
+  });
+
+  it('accumulates notes across executor iterations', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), max_iterations_per_task: 4 };
+    await context.configFile.write(config);
+
+    let coderCalls = 0;
+    const coderWorker = new MockWorker('coder', {
+      outputFn: () => {
+        coderCalls++;
+        if (coderCalls === 1) return { task_id: '1', status: 'completed', notes: ['Note from first run'] };
+        return { task_id: '2', status: 'completed', notes: ['Note from second run'] };
+      },
+    });
+
+    let reviewerCalls = 0;
+    const reviewerWorker = new MockWorker('reviewer', {
+      outputFn: () => {
+        reviewerCalls++;
+        if (reviewerCalls === 1) return { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 };
+        return { approved: true, done: true, completed_tasks: ['1', '2'], issues: [], confidence: 0.95 };
+      },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(result.finalStatus.notes).toContain('Note from first run');
+    expect(result.finalStatus.notes).toContain('Note from second run');
+  });
+
+  it('executor output without notes leaves state notes unchanged', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const };
+    await context.configFile.write(config);
+
+    const coderWorker = new MockWorker('coder', {
+      output: { task_id: '1', status: 'completed' },
+    });
+
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(result.finalStatus.notes).toEqual([]);
+  });
+
+  it('retries same worker when output is invalid JSON', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, parse_error_retries: 2 };
+    await context.configFile.write(config);
+
+    let coderCalls = 0;
+    const coderWorker = new MockWorker('coder', {
+      rawOutputFn: () => {
+        coderCalls++;
+        if (coderCalls < 2) return 'This is not valid JSON at all';
+        return JSON.stringify({ task_id: '1', status: 'completed' });
+      },
+    });
+
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(coderCalls).toBe(2); // retried once, then succeeded
+    expect(result.finalStatus.parse_error_count).toBe(0); // reset after success
+  });
+
+  it('advances to next turn after parse_error_retries exhausted', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, parse_error_retries: 2 };
+    await context.configFile.write(config);
+
+    let coderCalls = 0;
+    const coderWorker = new MockWorker('coder', {
+      rawOutputFn: () => {
+        coderCalls++;
+        return 'not json at all ever';
+      },
+    });
+
+    let reviewerCalls = 0;
+    const reviewerWorker = new MockWorker('reviewer', {
+      outputFn: () => {
+        reviewerCalls++;
+        return { approved: true, done: false, completed_tasks: [], issues: [], confidence: 0.95 };
+      },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    // After parse_error_retries exhausted (3 bad calls total), advances to reviewer
+    expect(coderCalls).toBe(3); // initial + 2 retries
+    expect(reviewerCalls).toBe(1); // reviewer got called
+    expect(result.finalStatus.parse_error_count).toBe(0); // reset after advancing
+  });
+
+  it('resets parse_error_count after successful parse', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, parse_error_retries: 3 };
+    await context.configFile.write(config);
+
+    let coderCalls = 0;
+    const coderWorker = new MockWorker('coder', {
+      rawOutputFn: () => {
+        coderCalls++;
+        if (coderCalls < 3) return 'invalid json';
+        return JSON.stringify({ task_id: '1', status: 'completed' });
+      },
+    });
+
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(result.finalStatus.parse_error_count).toBe(0);
+  });
+
+  it('batch mode: executor runs multiple tasks before reviewer is called', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, review_strategy: 'batch' as const };
+    await context.configFile.write(config);
+
+    let coderCalls = 0;
+    const coderWorker = new MockWorker('coder', {
+      outputFn: () => {
+        coderCalls++;
+        if (coderCalls === 1) return { task_id: '1', status: 'completed' };
+        if (coderCalls === 2) return { task_id: '2', status: 'completed' };
+        return { task_id: '', status: 'completed' }; // no more tasks
+      },
+    });
+
+    let reviewerCalls = 0;
+    const reviewerWorker = new MockWorker('reviewer', {
+      outputFn: () => {
+        reviewerCalls++;
+        return { approved: true, done: false, completed_tasks: ['1', '2'], issues: [], confidence: 0.95 };
+      },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(coderCalls).toBe(3); // ran for task 1, task 2, then empty = done
+    expect(reviewerCalls).toBe(1); // reviewer called once for all tasks
+  });
+
+  it('batch mode: reviewer rejection sends all feedback back to executor', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, review_strategy: 'batch' as const };
+    await context.configFile.write(config);
+
+    let coderCalls = 0;
+    const coderWorker = new MockWorker('coder', {
+      outputFn: () => {
+        coderCalls++;
+        // After rejection, executor does one task then signals done
+        if (coderCalls === 1) return { task_id: '1', status: 'completed' };
+        if (coderCalls === 2) return { task_id: '', status: 'completed' }; // batch 1 done
+        if (coderCalls === 3) return { task_id: '1', status: 'completed' }; // fix
+        return { task_id: '', status: 'completed' }; // batch 2 done
+      },
+    });
+
+    let reviewerCalls = 0;
+    const reviewerWorker = new MockWorker('reviewer', {
+      outputFn: () => {
+        reviewerCalls++;
+        if (reviewerCalls === 1) {
+          return { approved: false, done: false, completed_tasks: [], issues: [{ description: 'Missing tests', severity: 'high' }], confidence: 0.6 };
+        }
+        return { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 };
+      },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(reviewerCalls).toBe(2);
+    expect(coderCalls).toBe(4);
+  });
+
+  it('per-task mode unchanged with new config fields present', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, review_strategy: 'per_task' as const };
+    await context.configFile.write(config);
+
+    const coderWorker = new MockWorker('coder', {
+      output: { task_id: '1', status: 'completed' },
+    });
+
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(result.reason).toContain('manual');
+    expect(result.finalStatus.completed_tasks).toEqual(['1']);
+  });
+
   it('uses reviewer completed_tasks as source of truth for out-of-order tasks', async () => {
     const context = await setupTestRepo(testRepo);
 

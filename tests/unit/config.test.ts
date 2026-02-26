@@ -157,6 +157,159 @@ describe('StatusSchema feedback field', () => {
   });
 });
 
+describe('StatusSchema notes field', () => {
+  it('accepts notes array', () => {
+    const result = StatusSchema.parse({
+      plan_file: './PLAN.md',
+      turn: 'coder',
+      current_task: null,
+      completed_tasks: [],
+      iteration: 0,
+      done: false,
+      human_required: false,
+      blocked_reason: null,
+      pending_question: null,
+      updated_at: new Date().toISOString(),
+      notes: ['Chose library X', 'Used pattern Y'],
+    });
+    expect(result.notes).toEqual(['Chose library X', 'Used pattern Y']);
+  });
+
+  it('defaults notes to empty array', () => {
+    const result = StatusSchema.parse({
+      plan_file: './PLAN.md',
+      turn: 'coder',
+      current_task: null,
+      completed_tasks: [],
+      iteration: 0,
+      done: false,
+      human_required: false,
+      blocked_reason: null,
+      pending_question: null,
+      updated_at: new Date().toISOString(),
+    });
+    expect(result.notes).toEqual([]);
+  });
+
+  it('createInitialStatus returns empty notes', () => {
+    const status = createInitialStatus('./PLAN.md', 'coder');
+    expect(status.notes).toEqual([]);
+  });
+});
+
+describe('StatusSchema batch_pending_review field', () => {
+  it('accepts batch_pending_review true', () => {
+    const result = StatusSchema.parse({
+      plan_file: './PLAN.md',
+      turn: 'coder',
+      current_task: null,
+      completed_tasks: [],
+      iteration: 0,
+      done: false,
+      human_required: false,
+      blocked_reason: null,
+      pending_question: null,
+      updated_at: new Date().toISOString(),
+      batch_pending_review: true,
+    });
+    expect(result.batch_pending_review).toBe(true);
+  });
+
+  it('defaults batch_pending_review to false', () => {
+    const result = StatusSchema.parse({
+      plan_file: './PLAN.md',
+      turn: 'coder',
+      current_task: null,
+      completed_tasks: [],
+      iteration: 0,
+      done: false,
+      human_required: false,
+      blocked_reason: null,
+      pending_question: null,
+      updated_at: new Date().toISOString(),
+    });
+    expect(result.batch_pending_review).toBe(false);
+  });
+
+  it('createInitialStatus returns batch_pending_review false', () => {
+    const status = createInitialStatus('./PLAN.md', 'coder');
+    expect(status.batch_pending_review).toBe(false);
+  });
+});
+
+describe('StatusSchema parse_error_count field', () => {
+  it('accepts parse_error_count', () => {
+    const result = StatusSchema.parse({
+      plan_file: './PLAN.md',
+      turn: 'coder',
+      current_task: null,
+      completed_tasks: [],
+      iteration: 0,
+      done: false,
+      human_required: false,
+      blocked_reason: null,
+      pending_question: null,
+      updated_at: new Date().toISOString(),
+      parse_error_count: 2,
+    });
+    expect(result.parse_error_count).toBe(2);
+  });
+
+  it('defaults parse_error_count to 0', () => {
+    const result = StatusSchema.parse({
+      plan_file: './PLAN.md',
+      turn: 'coder',
+      current_task: null,
+      completed_tasks: [],
+      iteration: 0,
+      done: false,
+      human_required: false,
+      blocked_reason: null,
+      pending_question: null,
+      updated_at: new Date().toISOString(),
+    });
+    expect(result.parse_error_count).toBe(0);
+  });
+
+  it('createInitialStatus returns parse_error_count 0', () => {
+    const status = createInitialStatus('./PLAN.md', 'coder');
+    expect(status.parse_error_count).toBe(0);
+  });
+});
+
+describe('ConfigSchema review_strategy field', () => {
+  it('accepts review_strategy per_task', () => {
+    const result = ConfigSchema.parse({ review_strategy: 'per_task' });
+    expect(result.review_strategy).toBe('per_task');
+  });
+
+  it('accepts review_strategy batch', () => {
+    const result = ConfigSchema.parse({ review_strategy: 'batch' });
+    expect(result.review_strategy).toBe('batch');
+  });
+
+  it('defaults review_strategy to per_task', () => {
+    const result = ConfigSchema.parse({});
+    expect(result.review_strategy).toBe('per_task');
+  });
+
+  it('rejects invalid review_strategy', () => {
+    expect(() => ConfigSchema.parse({ review_strategy: 'invalid' })).toThrow();
+  });
+});
+
+describe('ConfigSchema parse_error_retries field', () => {
+  it('accepts parse_error_retries', () => {
+    const result = ConfigSchema.parse({ parse_error_retries: 5 });
+    expect(result.parse_error_retries).toBe(5);
+  });
+
+  it('defaults parse_error_retries to 3', () => {
+    const result = ConfigSchema.parse({});
+    expect(result.parse_error_retries).toBe(3);
+  });
+});
+
 describe('ConfigFile resolution fallback', () => {
   let tmpDir: string;
   let aiDir: string;

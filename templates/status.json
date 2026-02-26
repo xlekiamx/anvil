@@ -10,5 +10,8 @@
   "blocked_reason": null,
   "pending_question": null,
   "started_at": "",
-  "updated_at": ""
+  "updated_at": "",
+  "notes": [],
+  "batch_pending_review": false,
+  "parse_error_count": 0
 }

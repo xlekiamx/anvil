@@ -29,5 +29,7 @@
   "plan_file": "./PLAN.md",
   "workflow": ["coder", "reviewer"],
   "loop_mode": "auto",
-  "max_iterations_per_task": 6
+  "max_iterations_per_task": 6,
+  "review_strategy": "per_task",
+  "parse_error_retries": 3
 }

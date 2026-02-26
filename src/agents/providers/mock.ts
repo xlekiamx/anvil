@@ -11,6 +11,10 @@ export interface MockWorkerOptions {
   output?: Record<string, unknown>;
   /** Function to dynamically generate output based on prompt */
   outputFn?: (prompt: string) => Record<string, unknown>;
+  /** Return this raw string as-is (not JSON.stringify'd). For testing parse failure scenarios. */
+  rawOutput?: string;
+  /** Function returning a raw string as-is. For testing parse failure scenarios with dynamic control. */
+  rawOutputFn?: (prompt: string) => string;
 }
 
 export class MockWorker implements Worker {
@@ -37,6 +41,22 @@ export class MockWorker implements Worker {
         success: false,
         output: '',
         error: `Mock worker '${this.name}' failure`,
+        durationMs: Date.now() - start,
+      };
+    }
+
+    if (this.options.rawOutputFn) {
+      return {
+        success: true,
+        output: this.options.rawOutputFn(prompt),
+        durationMs: Date.now() - start,
+      };
+    }
+
+    if (this.options.rawOutput !== undefined) {
+      return {
+        success: true,
+        output: this.options.rawOutput,
         durationMs: Date.now() - start,
       };
     }

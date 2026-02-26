@@ -130,6 +130,7 @@ export class Orchestrator {
           workerConfig,
           planFile: planPath,
           stateFile: statePath,
+          notes: status.notes.length > 0 ? status.notes : undefined,
         });
 
         logger.info({ worker: workerName, iteration: status.iteration }, 'Invoking worker');
@@ -179,22 +180,63 @@ export class Orchestrator {
           };
         }
 
-        // Parse output
+        // Parse output — retry on failure instead of stopping
         let parsed: Record<string, unknown>;
         try {
           parsed = parseOutput(result.output);
+          if (status.parse_error_count > 0) {
+            status = await this.deps.statusFile.update({ parse_error_count: 0 });
+          }
         } catch (err) {
-          status = await this.block(status, `Failed to parse ${workerName} output: ${(err as Error).message}`);
-          return {
-            success: false,
-            finalStatus: status,
-            totalIterations: status.iteration - startIteration,
-            reason: `Failed to parse ${workerName} output`,
-          };
+          const newCount = status.parse_error_count + 1;
+          if (newCount <= config.parse_error_retries) {
+            logger.warn({ worker: workerName, attempt: newCount, retries: config.parse_error_retries }, 'Invalid JSON output, retrying worker');
+            status = await this.deps.statusFile.update({
+              parse_error_count: newCount,
+              feedback: [{
+                description: `Your last response was not valid JSON. You MUST respond with ONLY a JSON object matching the required schema: ${JSON.stringify(workerConfig.output_schema)}`,
+                severity: 'high',
+              }],
+            });
+            continue;
+          }
+          // Retries exhausted — advance to next turn rather than stopping
+          logger.warn({ worker: workerName, retries: config.parse_error_retries }, 'JSON parse retries exhausted, advancing to next turn');
+          const nextTurnOnFailure = stateMachine.getNextTurn(workerName, config.workflow);
+          status = await this.deps.statusFile.update({
+            parse_error_count: 0,
+            feedback: [],
+            turn: nextTurnOnFailure,
+          });
+          continue;
         }
 
         // Validate output against worker's output_schema
-        const validated = validateOutput(parsed, workerConfig.output_schema);
+        let validated: Record<string, unknown>;
+        try {
+          validated = validateOutput(parsed, workerConfig.output_schema);
+        } catch (err) {
+          const newCount = status.parse_error_count + 1;
+          if (newCount <= config.parse_error_retries) {
+            logger.warn({ worker: workerName, attempt: newCount }, 'Schema validation failed, retrying worker');
+            status = await this.deps.statusFile.update({
+              parse_error_count: newCount,
+              feedback: [{
+                description: `Your response was missing required fields. You MUST respond with ONLY a JSON object matching the required schema: ${JSON.stringify(workerConfig.output_schema)}`,
+                severity: 'high',
+              }],
+            });
+            continue;
+          }
+          logger.warn({ worker: workerName }, 'Schema validation retries exhausted, advancing to next turn');
+          const nextTurnOnFailure = stateMachine.getNextTurn(workerName, config.workflow);
+          status = await this.deps.statusFile.update({
+            parse_error_count: 0,
+            feedback: [],
+            turn: nextTurnOnFailure,
+          });
+          continue;
+        }
 
         // Update state based on worker behavior
         const behavior = workerConfig.behavior ?? 'executor';
@@ -203,22 +245,42 @@ export class Orchestrator {
         logger.debug({ validated, behavior, nextTurn }, 'Parsed worker output');
 
         if (behavior === 'executor') {
-          // Executor: read task_id, set current_task, advance turn, clear feedback
+          // Executor: read task_id, notes; update state based on review strategy
           const taskId = typeof validated.task_id === 'string' ? validated.task_id : '';
+          const newNotes = Array.isArray(validated.notes)
+            ? (validated.notes as unknown[]).filter((n): n is string => typeof n === 'string')
+            : [];
+          const updatedNotes = newNotes.length > 0 ? [...status.notes, ...newNotes] : undefined;
 
-          status = await this.deps.statusFile.update({
-            current_task: {
-              id: taskId,
-              status: 'in_review',
-            },
-            turn: nextTurn,
-            feedback: [],
-          });
+          if (config.review_strategy === 'batch' && taskId) {
+            // Batch mode with a new task: keep executor running
+            status = await this.deps.statusFile.update({
+              current_task: { id: taskId, status: 'in_progress' },
+              batch_pending_review: true,
+              feedback: [],
+              ...(updatedNotes ? { notes: updatedNotes } : {}),
+            });
+            logger.info({ taskId }, 'Batch mode: executor continuing with more tasks');
+          } else if (config.review_strategy === 'batch' && !taskId) {
+            // Batch mode: executor signals no more tasks, advance to reviewer
+            status = await this.deps.statusFile.update({
+              batch_pending_review: false,
+              turn: nextTurn,
+              feedback: [],
+              ...(updatedNotes ? { notes: updatedNotes } : {}),
+            });
+            logger.info({ nextTurn }, 'Batch mode: executor done, advancing to reviewer');
+          } else {
+            // Per-task mode (default): advance to reviewer after each task
+            status = await this.deps.statusFile.update({
+              current_task: { id: taskId, status: 'in_review' },
+              turn: nextTurn,
+              feedback: [],
+              ...(updatedNotes ? { notes: updatedNotes } : {}),
+            });
+            logger.info({ taskId, nextTurn }, 'Executor completed, advancing turn');
+          }
 
-          logger.info(
-            { taskId, nextTurn },
-            'Executor completed, advancing turn'
-          );
           logger.debug({ state: status }, 'State after executor');
         } else if (behavior === 'reviewer') {
           // Reviewer: read approved, completed_tasks, done, issues from output

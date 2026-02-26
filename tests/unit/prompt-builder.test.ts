@@ -139,3 +139,42 @@ describe('buildPrompt', () => {
     expect(prompt).not.toContain('## Plan');
   });
 });
+
+describe('buildPrompt notes context', () => {
+  it('includes Decision Notes section when notes exist', () => {
+    const ctx: PromptContext = {
+      workerConfig: makeWorkerConfig(),
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+      notes: ['Chose library X for better performance', 'Used pattern Y for testability'],
+    };
+
+    const prompt = buildPrompt(ctx);
+    expect(prompt).toContain('Decision Notes');
+    expect(prompt).toContain('Chose library X for better performance');
+    expect(prompt).toContain('Used pattern Y for testability');
+  });
+
+  it('omits Decision Notes section when notes is empty array', () => {
+    const ctx: PromptContext = {
+      workerConfig: makeWorkerConfig(),
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+      notes: [],
+    };
+
+    const prompt = buildPrompt(ctx);
+    expect(prompt).not.toContain('Decision Notes');
+  });
+
+  it('omits Decision Notes section when notes is undefined', () => {
+    const ctx: PromptContext = {
+      workerConfig: makeWorkerConfig(),
+      planFile: '/repo/PLAN.md',
+      stateFile: '/repo/.ai/state.json',
+    };
+
+    const prompt = buildPrompt(ctx);
+    expect(prompt).not.toContain('Decision Notes');
+  });
+});

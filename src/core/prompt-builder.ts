@@ -5,6 +5,7 @@ export interface PromptContext {
   workerConfig: WorkerConfig;
   planFile: string;
   stateFile: string;
+  notes?: string[];
 }
 
 export function buildPrompt(ctx: PromptContext): string {
@@ -32,6 +33,15 @@ export function buildPrompt(ctx: PromptContext): string {
   parts.push(`Plan file: ${ctx.planFile}`);
   parts.push(`State file: ${ctx.stateFile}`);
   parts.push('');
+
+  // Decision Notes
+  if (ctx.notes && ctx.notes.length > 0) {
+    parts.push('## Decision Notes');
+    for (const note of ctx.notes) {
+      parts.push(`- ${note}`);
+    }
+    parts.push('');
+  }
 
   // Output hint
   if (ctx.workerConfig.output_schema && Object.keys(ctx.workerConfig.output_schema).length > 0) {

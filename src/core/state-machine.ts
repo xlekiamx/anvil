@@ -57,6 +57,14 @@ export class StateMachine {
   }
 
   /**
+   * In batch mode, returns true when the executor is still running tasks
+   * and the reviewer should be skipped until the executor signals done.
+   */
+  shouldSkipReviewer(status: Status, config: Config): boolean {
+    return config.review_strategy === 'batch' && status.batch_pending_review;
+  }
+
+  /**
    * Check if output warrants human intervention.
    * Looks for critical severity in any `issues` array and low `confidence`.
    */

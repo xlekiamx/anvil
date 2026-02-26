@@ -39,6 +39,9 @@ export const StatusSchema = z.object({
   pending_question: PendingQuestionSchema.nullable().default(null),
   started_at: z.string().datetime().optional(),
   updated_at: z.string().datetime(),
+  notes: z.array(z.string()).default([]),
+  batch_pending_review: z.boolean().default(false),
+  parse_error_count: z.number().int().default(0),
 });
 export type Status = z.infer<typeof StatusSchema>;
 
@@ -57,5 +60,8 @@ export function createInitialStatus(planFile: string, firstWorker: string): Stat
     pending_question: null,
     started_at: now,
     updated_at: now,
+    notes: [],
+    batch_pending_review: false,
+    parse_error_count: 0,
   };
 }
