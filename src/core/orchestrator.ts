@@ -295,7 +295,9 @@ export class Orchestrator {
           logger.debug({ approved, done, issues, completedTasksRaw, confidence }, 'Validated reviewer output');
 
           // Check human intervention
-          const humanCheck = stateMachine.shouldRequestHumanIntervention(validated);
+          const humanCheck = config.human_intervention
+            ? stateMachine.shouldRequestHumanIntervention(validated)
+            : { required: false };
           if (humanCheck.required) {
             logger.warn({ reason: humanCheck.reason }, 'Human intervention required');
             const firstExecutor = findFirstExecutor(config);

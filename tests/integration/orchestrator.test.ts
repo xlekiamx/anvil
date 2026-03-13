@@ -242,6 +242,50 @@ describe('Orchestrator Integration', () => {
     expect(result.finalStatus.blocked_reason).toContain('failure');
   });
 
+  it('does not stop on critical issue when human_intervention is false', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, human_intervention: false };
+    await context.configFile.write(config);
+
+    const coderWorker = new MockWorker('coder', {
+      output: { task_id: '1', status: 'completed' },
+    });
+
+    let reviewerCalls = 0;
+    const reviewerWorker = new MockWorker('reviewer', {
+      outputFn: () => {
+        reviewerCalls++;
+        if (reviewerCalls === 1) {
+          return {
+            approved: false, done: false, completed_tasks: [],
+            issues: [{ description: 'SQL injection vulnerability', severity: 'critical' }],
+            confidence: 0.9,
+          };
+        }
+        return { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.9 };
+      },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.finalStatus.human_required).toBe(false);
+    expect(result.success).toBe(true);
+    expect(reviewerCalls).toBe(2); // critical issue treated as rejection, coder fixes, reviewer approves
+  });
+
   it('stops on human required (critical issue)', async () => {
     const context = await setupTestRepo(testRepo);
 

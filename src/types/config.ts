@@ -55,6 +55,7 @@ export const ConfigSchema = z.object({
   max_iterations_per_task: z.number().int().min(1).max(50).default(6),
   review_strategy: ReviewStrategySchema.default('per_task'),
   parse_error_retries: z.number().int().min(0).default(3),
+  human_intervention: z.boolean().default(true),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

@@ -2,10 +2,67 @@ import * as path from 'node:path';
 import { Command } from 'commander';
 import ora from 'ora';
 import { createLogger } from '../../logger/index.js';
-import { createAnvilContext, createOrchestrator } from '../../core/factory.js';
+import { createAnvilContext, createOrchestrator, type AnvilContext } from '../../core/factory.js';
+import type { Config } from '../../types/config.js';
 import { printError, printInfo, printSuccess, formatOrchestratorResult } from '../output.js';
-import { promptUserForAnswer, displayPendingQuestion } from '../user-input.js';
+import { promptUserForAnswer, promptHumanGuidance, displayPendingQuestion } from '../user-input.js';
 import type { DetectedQuestion } from '../../agents/types.js';
+import type { ReviewIssue } from '../../types/status.js';
+
+export interface ResumeSessionOptions {
+  /** Injectable for testing — defaults to promptHumanGuidance */
+  guidancePromptFn?: (issues: ReviewIssue[]) => Promise<string>;
+}
+
+export async function resumeSession(
+  context: AnvilContext,
+  config: Config,
+  options: ResumeSessionOptions = {}
+): Promise<void> {
+  const status = await context.statusFile.read();
+
+  if (!status) throw new Error('No state file found. Run "anvil start" first.');
+  if (status.done) throw new Error('Session is already complete. Run "anvil start" for a new session.');
+
+  // Handle pending question first
+  if (status.pending_question) {
+    displayPendingQuestion(status.pending_question);
+    const question: DetectedQuestion = {
+      sessionId: status.pending_question.session_id,
+      question: status.pending_question.question,
+      options: status.pending_question.options,
+    };
+    const answer = await promptUserForAnswer(question);
+    console.log('');
+    printInfo(`Resuming with answer: "${answer}"`);
+    await context.statusFile.update({ pending_question: null });
+  }
+
+  // Clear blocked states
+  if (status.human_required) {
+    const promptFn = options.guidancePromptFn ?? promptHumanGuidance;
+    const guidance = await promptFn(status.feedback);
+
+    const firstWorker = config.workflow[0]!;
+    const updatedNotes = guidance
+      ? [...status.notes, `Human guidance: ${guidance}`]
+      : status.notes;
+
+    await context.statusFile.update({
+      human_required: false,
+      turn: firstWorker,
+      notes: updatedNotes,
+      current_task: status.current_task ? {
+        ...status.current_task,
+        status: 'fixing',
+      } : null,
+    });
+    printSuccess('Got your guidance, sending to coder');
+  } else if (status.blocked_reason) {
+    await context.statusFile.update({ blocked_reason: null });
+    printSuccess('Cleared blocked state');
+  }
+}
 
 export function createResumeCommand(): Command {
   return new Command('resume')
@@ -26,8 +83,8 @@ export function createResumeCommand(): Command {
           process.exit(1);
         }
 
-        const status = await context.statusFile.read();
         const config = await context.configFile.read();
+        const status = await context.statusFile.read();
 
         if (!status) {
           printError('No state file found. Run "anvil start" first.');
@@ -39,45 +96,10 @@ export function createResumeCommand(): Command {
           return;
         }
 
-        // Handle pending question first
-        if (status.pending_question) {
-          displayPendingQuestion(status.pending_question);
+        await resumeSession(context, config);
 
-          const question: DetectedQuestion = {
-            sessionId: status.pending_question.session_id,
-            question: status.pending_question.question,
-            options: status.pending_question.options,
-          };
-
-          const answer = await promptUserForAnswer(question);
-          console.log('');
-          printInfo(`Resuming with answer: "${answer}"`);
-
-          await context.statusFile.update({ pending_question: null });
-        }
-
-        // Clear blocked states
-        if (status.human_required) {
-          // Reviewer flagged human intervention — send back to coder to fix
-          const firstWorker = config.workflow[0]!;
-          await context.statusFile.update({
-            human_required: false,
-            turn: firstWorker,
-            current_task: status.current_task ? {
-              ...status.current_task,
-              status: 'fixing',
-            } : null,
-          });
-          printSuccess('Cleared human intervention, sending back to coder');
-        } else if (status.blocked_reason) {
-          // Other block — just clear it and resume from current turn
-          await context.statusFile.update({
-            blocked_reason: null,
-          });
-          printSuccess('Cleared blocked state');
-        }
-
-        printInfo(`Resuming from turn: ${status.turn}, iteration: ${status.iteration}`);
+        const updatedStatus = await context.statusFile.read();
+        printInfo(`Resuming from turn: ${updatedStatus!.turn}, iteration: ${updatedStatus!.iteration}`);
 
         spinner.start('Running orchestration loop...');
 

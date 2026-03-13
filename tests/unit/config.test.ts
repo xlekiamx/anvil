@@ -298,6 +298,23 @@ describe('ConfigSchema review_strategy field', () => {
   });
 });
 
+describe('ConfigSchema human_intervention field', () => {
+  it('accepts human_intervention false', () => {
+    const result = ConfigSchema.parse({ human_intervention: false });
+    expect(result.human_intervention).toBe(false);
+  });
+
+  it('accepts human_intervention true', () => {
+    const result = ConfigSchema.parse({ human_intervention: true });
+    expect(result.human_intervention).toBe(true);
+  });
+
+  it('defaults human_intervention to true', () => {
+    const result = ConfigSchema.parse({});
+    expect(result.human_intervention).toBe(true);
+  });
+});
+
 describe('ConfigSchema parse_error_retries field', () => {
   it('accepts parse_error_retries', () => {
     const result = ConfigSchema.parse({ parse_error_retries: 5 });

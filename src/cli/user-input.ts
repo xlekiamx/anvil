@@ -66,6 +66,39 @@ export async function promptUserForAnswer(question: DetectedQuestion): Promise<s
 }
 
 /**
+ * Prompt the user for alignment guidance when human intervention is required.
+ * Shows the issues that triggered the intervention, then asks for direction.
+ */
+export async function promptHumanGuidance(
+  issues: Array<{ description: string; severity: string }>
+): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  console.log('');
+  console.log(chalk.yellow('⚠ Human alignment required'));
+  console.log('');
+
+  if (issues.length > 0) {
+    console.log(chalk.white('  Issues flagged by the reviewer:'));
+    for (const issue of issues) {
+      const color = issue.severity === 'critical' ? chalk.red : chalk.yellow;
+      console.log(`  ${color(`[${issue.severity}]`)} ${issue.description}`);
+    }
+    console.log('');
+  }
+
+  console.log(chalk.white('  What should the coder focus on? Provide context and direction:'));
+  console.log('');
+
+  return new Promise((resolve) => {
+    rl.question(chalk.green('  Your guidance: '), (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+/**
  * Display a pending question that was saved from a previous session
  */
 export function displayPendingQuestion(question: {
