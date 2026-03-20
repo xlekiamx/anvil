@@ -315,6 +315,25 @@ describe('ConfigSchema human_intervention field', () => {
   });
 });
 
+describe('WorkerConfigSchema sandbox field', () => {
+  it('accepts sandbox string', () => {
+    const result = WorkerConfigSchema.parse({
+      provider: 'codex',
+      role: 'test role',
+      sandbox: 'read-only',
+    });
+    expect(result.sandbox).toBe('read-only');
+  });
+
+  it('works without sandbox (optional)', () => {
+    const result = WorkerConfigSchema.parse({
+      provider: 'mock',
+      role: 'test role',
+    });
+    expect(result.sandbox).toBeUndefined();
+  });
+});
+
 describe('ConfigSchema parse_error_retries field', () => {
   it('accepts parse_error_retries', () => {
     const result = ConfigSchema.parse({ parse_error_retries: 5 });

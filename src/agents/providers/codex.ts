@@ -7,6 +7,7 @@ import type { Worker, WorkerResult } from '../types.js';
 export interface CodexWorkerOptions {
   model?: string;
   outputSchema?: Record<string, unknown>;
+  sandbox?: string;
 }
 
 /**
@@ -70,6 +71,7 @@ function toJsonSchema(simple: Record<string, unknown>): Record<string, unknown> 
 
 export class CodexWorker implements Worker {
   readonly name: string;
+  readonly sandbox: string;
   private childProcess: ReturnType<typeof execa> | null = null;
 
   constructor(
@@ -77,6 +79,7 @@ export class CodexWorker implements Worker {
     private readonly options: CodexWorkerOptions = {}
   ) {
     this.name = name;
+    this.sandbox = options.sandbox ?? 'danger-full-access';
   }
 
   async execute(prompt: string, cwd: string): Promise<WorkerResult> {
@@ -88,7 +91,7 @@ export class CodexWorker implements Worker {
       const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anvil-codex-'));
       outputFile = path.join(tmpDir, 'output.txt');
 
-      const args = ['exec', '--skip-git-repo-check', '--color=never'];
+      const args = ['exec', '--skip-git-repo-check', '--color=never', '-s', this.sandbox];
 
       // Write output schema to temp file if available
       if (this.options.outputSchema && Object.keys(this.options.outputSchema).length > 0) {

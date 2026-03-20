@@ -17,6 +17,7 @@ export function createWorker(name: string, config: WorkerConfig): Worker {
       return new CodexWorker(name, {
         model: config.model,
         outputSchema: config.output_schema,
+        sandbox: config.sandbox,
       });
     default:
       throw new Error(`Unknown provider: ${config.provider}`);

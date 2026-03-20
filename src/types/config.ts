@@ -20,6 +20,7 @@ export const WorkerConfigSchema = z.object({
   output_schema: z.record(z.unknown()).default({}),
   behavior: BehaviorSchema.default('executor'),
   prompt_file: z.string().optional(),
+  sandbox: z.string().optional(),
 });
 export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
 

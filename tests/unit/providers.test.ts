@@ -88,6 +88,31 @@ describe('createWorker', () => {
     expect(worker.name).toBe('reviewer');
   });
 
+  it('passes sandbox to codex worker', () => {
+    const config: WorkerConfig = {
+      provider: 'codex',
+      role: 'Reviewer role',
+      interactive: false,
+      output_schema: {},
+      sandbox: 'read-only',
+    };
+
+    const worker = createWorker('reviewer', config);
+    expect((worker as import('../../src/agents/providers/codex.js').CodexWorker).sandbox).toBe('read-only');
+  });
+
+  it('codex worker defaults sandbox to danger-full-access', () => {
+    const config: WorkerConfig = {
+      provider: 'codex',
+      role: 'Reviewer role',
+      interactive: false,
+      output_schema: {},
+    };
+
+    const worker = createWorker('reviewer', config);
+    expect((worker as import('../../src/agents/providers/codex.js').CodexWorker).sandbox).toBe('danger-full-access');
+  });
+
   it('throws on unknown provider', () => {
     const config = {
       provider: 'unknown' as 'mock',
