@@ -57,6 +57,7 @@ export const ConfigSchema = z.object({
   review_strategy: ReviewStrategySchema.default('per_task'),
   parse_error_retries: z.number().int().min(0).default(3),
   human_intervention: z.boolean().default(true),
+  auto_commit: z.boolean().default(true),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

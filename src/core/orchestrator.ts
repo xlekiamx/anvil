@@ -323,15 +323,17 @@ export class Orchestrator {
 
           if (approved) {
             // Commit changes
-            try {
-              await execa('git', ['add', '-A'], { cwd: this.repoPath, reject: false });
-              const taskId = status.current_task?.id ?? 'task';
-              await execa('git', ['commit', '-m', `anvil: task ${taskId}`], {
-                cwd: this.repoPath,
-                reject: false,
-              });
-            } catch {
-              // Commit is best-effort
+            if (config.auto_commit) {
+              try {
+                await execa('git', ['add', '-A'], { cwd: this.repoPath, reject: false });
+                const taskId = status.current_task?.id ?? 'task';
+                await execa('git', ['commit', '-m', `anvil: task ${taskId}`], {
+                  cwd: this.repoPath,
+                  reject: false,
+                });
+              } catch {
+                // Commit is best-effort
+              }
             }
 
             // Merge completed tasks — reviewer is source of truth

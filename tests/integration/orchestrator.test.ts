@@ -752,4 +752,42 @@ describe('Orchestrator Integration', () => {
     expect(result.finalStatus.completed_tasks).toContain('2');
     expect(result.finalStatus.completed_tasks).toContain('3');
   });
+
+  it('skips git commit when auto_commit is false', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, auto_commit: false };
+    await context.configFile.write(config);
+
+    const { execa } = await import('execa');
+    // Make an initial commit so git log works
+    await execa('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: testRepo.path, reject: false });
+
+    const coderWorker = new MockWorker('coder', {
+      output: { task_id: '1', status: 'completed' },
+    });
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+
+    // No anvil commit should have been made
+    const log = await execa('git', ['log', '--oneline'], { cwd: testRepo.path, reject: false });
+    expect(log.stdout).not.toContain('anvil:');
+  });
 });

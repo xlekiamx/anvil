@@ -298,6 +298,18 @@ describe('ConfigSchema review_strategy field', () => {
   });
 });
 
+describe('ConfigSchema auto_commit field', () => {
+  it('defaults auto_commit to true', () => {
+    const result = ConfigSchema.parse({});
+    expect(result.auto_commit).toBe(true);
+  });
+
+  it('accepts auto_commit false', () => {
+    const result = ConfigSchema.parse({ auto_commit: false });
+    expect(result.auto_commit).toBe(false);
+  });
+});
+
 describe('ConfigSchema human_intervention field', () => {
   it('accepts human_intervention false', () => {
     const result = ConfigSchema.parse({ human_intervention: false });
