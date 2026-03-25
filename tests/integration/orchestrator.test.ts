@@ -753,6 +753,78 @@ describe('Orchestrator Integration', () => {
     expect(result.finalStatus.completed_tasks).toContain('3');
   });
 
+  it('calls committer worker after reviewer approves', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const };
+    await context.configFile.write(config);
+
+    const coderWorker = new MockWorker('coder', {
+      output: { task_id: '1', status: 'completed' },
+    });
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 },
+    });
+
+    let committerCalled = false;
+    const committerWorker = new MockWorker('committer', {
+      outputFn: () => { committerCalled = true; return {}; },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+      workerFactory: () => committerWorker,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    await orchestrator.run();
+
+    expect(committerCalled).toBe(true);
+  });
+
+  it('skips committer worker when auto_commit is false', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, auto_commit: false };
+    await context.configFile.write(config);
+
+    const coderWorker = new MockWorker('coder', {
+      output: { task_id: '1', status: 'completed' },
+    });
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 },
+    });
+
+    let committerCalled = false;
+    const committerWorker = new MockWorker('committer', {
+      outputFn: () => { committerCalled = true; return {}; },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+      workerFactory: () => committerWorker,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    await orchestrator.run();
+
+    expect(committerCalled).toBe(false);
+  });
+
   it('skips git commit when auto_commit is false', async () => {
     const context = await setupTestRepo(testRepo);
     const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, auto_commit: false };

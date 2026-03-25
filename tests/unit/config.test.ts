@@ -310,6 +310,29 @@ describe('ConfigSchema auto_commit field', () => {
   });
 });
 
+describe('ConfigSchema committer field', () => {
+  it('is optional — omitted by default', () => {
+    const result = ConfigSchema.parse({});
+    expect(result.committer).toBeUndefined();
+  });
+
+  it('accepts committer with provider override', () => {
+    const result = ConfigSchema.parse({ committer: { provider: 'claude' } });
+    expect(result.committer?.provider).toBe('claude');
+  });
+
+  it('accepts committer with model override', () => {
+    const result = ConfigSchema.parse({ committer: { model: 'o3' } });
+    expect(result.committer?.model).toBe('o3');
+  });
+
+  it('accepts committer with both provider and model', () => {
+    const result = ConfigSchema.parse({ committer: { provider: 'codex', model: 'o3' } });
+    expect(result.committer?.provider).toBe('codex');
+    expect(result.committer?.model).toBe('o3');
+  });
+});
+
 describe('ConfigSchema human_intervention field', () => {
   it('accepts human_intervention false', () => {
     const result = ConfigSchema.parse({ human_intervention: false });

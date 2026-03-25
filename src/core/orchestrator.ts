@@ -1,5 +1,4 @@
 import * as path from 'node:path';
-import { execa } from 'execa';
 import type { Logger } from '../logger/index.js';
 import type { Status } from '../types/status.js';
 import type { Worker, QuestionHandler } from '../agents/types.js';
@@ -8,7 +7,8 @@ import type { ConfigFile } from '../files/config.js';
 import { StateMachine } from './state-machine.js';
 import { buildPrompt } from './prompt-builder.js';
 import { parseOutput, validateOutput } from './output-parser.js';
-import type { Config } from '../types/config.js';
+import type { Config, WorkerConfig } from '../types/config.js';
+import { createWorker } from '../agents/factory.js';
 
 /** Find the first executor-behavior worker in the workflow. */
 function findFirstExecutor(config: Config): string {
@@ -25,6 +25,7 @@ export interface OrchestratorDependencies {
   configFile: ConfigFile;
   workers: Map<string, Worker>;
   questionHandler?: QuestionHandler;
+  workerFactory?: (name: string, config: WorkerConfig) => Worker;
 }
 
 export interface OrchestratorResult {
@@ -322,18 +323,9 @@ export class Orchestrator {
           }
 
           if (approved) {
-            // Commit changes
+            // Commit via agent
             if (config.auto_commit) {
-              try {
-                await execa('git', ['add', '-A'], { cwd: this.repoPath, reject: false });
-                const taskId = status.current_task?.id ?? 'task';
-                await execa('git', ['commit', '-m', `anvil: task ${taskId}`], {
-                  cwd: this.repoPath,
-                  reject: false,
-                });
-              } catch {
-                // Commit is best-effort
-              }
+              await this.runCommitter(config, status, planPath, statePath);
             }
 
             // Merge completed tasks — reviewer is source of truth
@@ -430,6 +422,40 @@ export class Orchestrator {
         process.removeListener('SIGINT', this.sigintHandler);
         this.sigintHandler = null;
       }
+    }
+  }
+
+  private async runCommitter(config: Config, status: Status, planPath: string, statePath: string): Promise<void> {
+    const { logger } = this.deps;
+    const factory = this.deps.workerFactory ?? createWorker;
+
+    // Derive committer config: use explicit committer config or fall back to first executor's provider/model
+    const firstExecutorName = findFirstExecutor(config);
+    const firstExecutorConfig = config.workers[firstExecutorName];
+    if (!firstExecutorConfig) return;
+
+    const committerConfig: WorkerConfig = {
+      provider: config.committer?.provider ?? firstExecutorConfig.provider,
+      model: config.committer?.model ?? firstExecutorConfig.model,
+      role: 'You are a git commit author. Your only job is to stage all changes and write a meaningful conventional commit message based on the work just completed. Run: git add -A, then git commit with a descriptive message. Read the state file to understand what task was completed and git diff/status to understand what changed.',
+      interactive: false,
+      output_schema: {},
+      behavior: 'executor',
+      sandbox: firstExecutorConfig.sandbox,
+    };
+
+    const committer = factory('committer', committerConfig);
+
+    const prompt = buildPrompt({
+      workerConfig: committerConfig,
+      planFile: planPath,
+      stateFile: statePath,
+    });
+
+    logger.info({ task: status.current_task?.id }, 'Running committer agent');
+    const result = await committer.execute(prompt, this.repoPath);
+    if (!result.success) {
+      logger.warn({ error: result.error }, 'Committer agent failed — skipping commit');
     }
   }
 
