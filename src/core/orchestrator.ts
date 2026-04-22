@@ -189,6 +189,26 @@ export class Orchestrator {
             status = await this.deps.statusFile.update({ parse_error_count: 0 });
           }
         } catch (err) {
+          const workerBehavior = workerConfig.behavior ?? 'executor';
+          const isExecutorFixing = workerBehavior === 'executor' && status.current_task?.status === 'fixing';
+          if (isExecutorFixing && status.current_task) {
+            const nextTurnOnFixing = stateMachine.getNextTurn(workerName, config.workflow);
+            logger.info(
+              { worker: workerName, taskId: status.current_task.id, nextTurn: nextTurnOnFixing },
+              'Executor fixing response was not JSON; assuming fix is complete and advancing to reviewer'
+            );
+            status = await this.deps.statusFile.update({
+              parse_error_count: 0,
+              feedback: [],
+              current_task: {
+                ...status.current_task,
+                status: 'in_review',
+              },
+              turn: nextTurnOnFixing,
+            });
+            continue;
+          }
+
           const newCount = status.parse_error_count + 1;
           if (newCount <= config.parse_error_retries) {
             logger.warn({ worker: workerName, attempt: newCount, retries: config.parse_error_retries }, 'Invalid JSON output, retrying worker');
@@ -254,9 +274,13 @@ export class Orchestrator {
           const updatedNotes = newNotes.length > 0 ? [...status.notes, ...newNotes] : undefined;
 
           if (config.review_strategy === 'batch' && taskId) {
-            // Batch mode with a new task: keep executor running
+            // Batch mode with a new task: persist progress and keep executor running.
+            // This prevents repeatedly picking the same task because completed_tasks stays stale.
+            const mergedCompleted = new Set(status.completed_tasks);
+            mergedCompleted.add(taskId);
             status = await this.deps.statusFile.update({
               current_task: { id: taskId, status: 'in_progress' },
+              completed_tasks: [...mergedCompleted],
               batch_pending_review: true,
               feedback: [],
               ...(updatedNotes ? { notes: updatedNotes } : {}),

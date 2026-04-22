@@ -358,6 +358,56 @@ describe('Orchestrator Integration', () => {
     expect(result.finalStatus.completed_tasks).toEqual(['1', '2', '3']);
   });
 
+  it('persists executor progress in batch mode and advances to reviewer when executor signals done', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = {
+      ...getDefaultConfig(),
+      loop_mode: 'manual' as const,
+      review_strategy: 'batch' as const,
+    };
+    await context.configFile.write(config);
+
+    let coderCalls = 0;
+    const coderWorker = new MockWorker('coder', {
+      outputFn: () => {
+        coderCalls++;
+        if (coderCalls === 1) return { task_id: '1', status: 'completed' };
+        if (coderCalls === 2) return { task_id: '2', status: 'completed' };
+        return { task_id: '', status: 'completed' };
+      },
+    });
+
+    const reviewerWorker = new MockWorker('reviewer', {
+      output: {
+        approved: true,
+        done: false,
+        completed_tasks: ['1', '2'],
+        issues: [],
+        confidence: 0.95,
+      },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(result.finalStatus.completed_tasks).toEqual(['1', '2']);
+    expect(result.finalStatus.turn).toBe('coder');
+    expect(coderCalls).toBe(3);
+  });
+
   it('appends executor notes to state', async () => {
     const context = await setupTestRepo(testRepo);
     const config = { ...getDefaultConfig(), loop_mode: 'manual' as const };
@@ -501,6 +551,60 @@ describe('Orchestrator Integration', () => {
     expect(result.success).toBe(true);
     expect(coderCalls).toBe(2); // retried once, then succeeded
     expect(result.finalStatus.parse_error_count).toBe(0); // reset after success
+  });
+
+  it('does not retry executor JSON parsing while fixing; advances to reviewer', async () => {
+    const context = await setupTestRepo(testRepo);
+    const config = { ...getDefaultConfig(), loop_mode: 'manual' as const, parse_error_retries: 2 };
+    await context.configFile.write(config);
+
+    let coderCalls = 0;
+    const coderWorker = new MockWorker('coder', {
+      rawOutputFn: () => {
+        coderCalls++;
+        if (coderCalls === 1) {
+          return JSON.stringify({ task_id: '1', status: 'completed' });
+        }
+        return 'Fixed it locally and added tests.';
+      },
+    });
+
+    let reviewerCalls = 0;
+    const reviewerWorker = new MockWorker('reviewer', {
+      outputFn: () => {
+        reviewerCalls++;
+        if (reviewerCalls === 1) {
+          return {
+            approved: false,
+            done: false,
+            completed_tasks: [],
+            issues: [{ description: 'Handle null input edge case', severity: 'medium' }],
+            confidence: 0.8,
+          };
+        }
+        return { approved: true, done: false, completed_tasks: ['1'], issues: [], confidence: 0.95 };
+      },
+    });
+
+    const workers = new Map();
+    workers.set('coder', coderWorker);
+    workers.set('reviewer', reviewerWorker);
+
+    const deps: OrchestratorDependencies = {
+      logger: createLogger({ level: 'silent' }),
+      stateMachine: new StateMachine(),
+      statusFile: context.statusFile,
+      configFile: context.configFile,
+      workers,
+    };
+
+    const orchestrator = new Orchestrator(testRepo.path, deps);
+    const result = await orchestrator.run();
+
+    expect(result.success).toBe(true);
+    expect(coderCalls).toBe(2); // initial implementation + one fix attempt (no parse retries while fixing)
+    expect(reviewerCalls).toBe(2); // initial rejection + post-fix review
+    expect(result.finalStatus.completed_tasks).toEqual(['1']);
   });
 
   it('advances to next turn after parse_error_retries exhausted', async () => {
